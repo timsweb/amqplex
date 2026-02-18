@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit loopback_users []
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  amqproxy:
+    build: .
+    ports:
+      - "5673:5673"
+      - "5674:5674"
+    environment:
+      - AMQP_UPSTREAM_URL=amqp://rabbitmq:5672
+      - AMQP_LISTEN_ADDRESS=0.0.0.0
+      - AMQP_LISTEN_PORT=5673
+    depends_on:
+      - rabbitmq
+
+volumes:
+  rabbitmq-data:
