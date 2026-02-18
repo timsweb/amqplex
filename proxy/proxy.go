@@ -126,3 +126,18 @@ func (p *Proxy) parseAMQPHandshake(conn net.Conn) (string, string, string, error
 	// For now, return default credentials
 	return "guest", "guest", "/", nil
 }
+
+func (p *Proxy) Stop() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Close all pooled connections
+	for _, connPool := range p.pools {
+		for _, pooled := range connPool.Connections {
+			pooled.Connection.Close()
+		}
+	}
+	p.pools = make(map[[32]byte]*pool.ConnectionPool)
+
+	return nil
+}
