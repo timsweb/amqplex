@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 
@@ -11,6 +12,17 @@ import (
 	"github.com/tim/amqproxy/pool"
 	"github.com/tim/amqproxy/tlsutil"
 )
+
+const (
+	AMQPProtocolHeader = "AMQP\x00\x00\x09\x01"
+)
+
+type AMQPHandshake struct {
+	Protocol string
+	Username string
+	Password string
+	Vhost    string
+}
 
 type Proxy struct {
 	listenAddr string
@@ -100,6 +112,16 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 }
 
 func (p *Proxy) parseAMQPHandshake(conn net.Conn) (string, string, string, error) {
+	// Read protocol header (ensure all 8 bytes are read)
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return "", "", "", err
+	}
+
+	if string(header) != AMQPProtocolHeader {
+		return "", "", "", fmt.Errorf("invalid AMQP protocol header")
+	}
+
 	// TODO: Parse full AMQP handshake to extract credentials
 	// For now, return default credentials
 	return "guest", "guest", "/", nil
