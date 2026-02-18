@@ -1,0 +1,16 @@
+[listen]
+address = "0.0.0.0"
+port = 5673
+
+[pool]
+idle_timeout = 5
+max_channels = 65535
+
+[upstream]
+url = "amqps://rabbitmq:5671"
+
+[tls]
+ca_cert = "/path/to/ca.crt"
+client_cert = "/path/to/client.crt"
+client_key = "/path/to/client.key"
+skip_verify = false
