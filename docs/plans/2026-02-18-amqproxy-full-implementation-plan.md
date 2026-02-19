@@ -323,6 +323,10 @@ git commit -m "feat: add AMQP frame parser and serializer"
 
 ## Task 3: Credential Extraction
 
+**CRITICAL NOTE:** This task has been updated to reflect correct AMQP 0-9-1 specification.
+Credentials are in **Connection.StartOk** (class 10, method 20), NOT Connection.Open (method 40).
+See https://www.rabbitmq.com/amqp-0-9-1-reference.html#connection.start-ok
+
 **Files:**
 - Create: `proxy/credentials.go`
 - Create: `proxy/credentials_test.go`
@@ -337,12 +341,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParseConnectionOpen(t *testing.T) {
-	data := serializeConnectionOpen("test-vhost", "user", "pass")
+func TestParseConnectionStartOk(t *testing.T) {
+	// PLAIN mechanism format: \0username\0password
+	response := serializeConnectionStartOkResponse("user", "pass")
+	data := serializeConnectionStartOk("PLAIN", response)
 
-	creds, err := ParseConnectionOpen(data)
+	creds, err := ParseConnectionStartOk(data)
 	assert.NoError(t, err)
-	assert.Equal(t, "test-vhost", creds.Vhost)
 	assert.Equal(t, "user", creds.Username)
 	assert.Equal(t, "pass", creds.Password)
 }
@@ -351,7 +356,7 @@ func TestParseConnectionOpen(t *testing.T) {
 **Step 2: Run test to verify it fails**
 
 Run: `go test ./proxy/credentials_test.go -v`
-Expected: FAIL with "ParseConnectionOpen not defined"
+Expected: FAIL with "ParseConnectionStartOk not defined"
 
 **Step 3: Implement credential parsing**
 
@@ -366,48 +371,48 @@ import (
 type Credentials struct {
 	Username string
 	Password string
-	Vhost    string
 }
 
-type ConnectionOpenFrame struct {
-	Vhost    string
-	Reserved string
-	Username string
-	Password string
-}
-
-func ParseConnectionOpen(data []byte) (*Credentials, error) {
+func ParseConnectionStartOk(data []byte) (*Credentials, error) {
 	header, err := ParseMethodHeader(data)
 	if err != nil {
 		return nil, err
 	}
-	if header.ClassID != 10 || header.MethodID != 40 {
-		return nil, errors.New("not a Connection.Open frame")
+	if header.ClassID != 10 || header.MethodID != 20 {
+		return nil, errors.New("not a Connection.StartOk frame")
 	}
 
-	methodFields := data[4:]
-	vhost, _, err := parseShortString(methodFields)
+	offset := 4
+
+	// Skip client-properties (table)
+	_, tableEnd, err := parseTable(data[offset:])
+	if err != nil {
+		return nil, err
+	}
+	offset += tableEnd
+
+	// Skip mechanism (shortstr) - e.g., "PLAIN"
+	_, mechLen, err := parseShortString(data[offset:])
+	if err != nil {
+		return nil, err
+	}
+	offset += mechLen
+
+	// Parse response (longstr) - contains \0username\0password
+	response, _, err := parseLongString(data[offset:])
 	if err != nil {
 		return nil, err
 	}
 
-	_, usernameEnd, err := parseShortString(methodFields[vhost+1:])
-	if err != nil {
-		return nil, err
+	// Parse PLAIN format: \0username\0password
+	parts := bytes.Split(response, []byte{0})
+	if len(parts) != 3 {
+		return nil, errors.New("invalid PLAIN auth format")
 	}
-
-	_, passwordEnd, err := parseShortString(methodFields[usernameEnd:])
-	if err != nil {
-		return nil, err
-	}
-
-	username := string(methodFields[vhost+2 : usernameEnd])
-	password := string(methodFields[usernameEnd+2 : passwordEnd])
 
 	return &Credentials{
-		Vhost:    string(vhost),
-		Username: username,
-		Password: password,
+		Username: string(parts[1]),
+		Password: string(parts[2]),
 	}, nil
 }
 
@@ -422,19 +427,57 @@ func parseShortString(data []byte) (string, int, error) {
 	return string(data[1 : 1+length]), 1 + length, nil
 }
 
-func serializeConnectionOpen(vhost, username, password string) []byte {
-	vhostBytes := serializeShortString(vhost)
-	usernameBytes := serializeShortString(username)
-	passwordBytes := serializeShortString(password)
+func parseLongString(data []byte) ([]byte, int, error) {
+	if len(data) < 4 {
+		return nil, 0, errors.New("data too short")
+	}
+	length := int(binary.BigEndian.Uint32(data[0:4]))
+	if len(data) < 4+length {
+		return nil, 0, errors.New("invalid long string length")
+	}
+	return data[4 : 4+length], 4 + length, nil
+}
 
-	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 40})
+func parseTable(data []byte) ([]byte, int, error) {
+	// For now, skip tables - not needed for credential extraction
+	if len(data) < 4 {
+		return nil, 0, errors.New("table too short")
+	}
+	length := int(binary.BigEndian.Uint32(data[0:4]))
+	return data[4 : 4+length], 4 + length, nil
+}
 
-	payload := make([]byte, 0, 0, 0, 0)
-	payload = append(payload, vhostBytes...)
-	payload = append(payload, usernameBytes...)
-	payload = append(payload, passwordBytes...)
+func serializeConnectionStartOk(mechanism string, response []byte) []byte {
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 20})
+
+	payload := make([]byte, 0)
+	payload = append(payload, serializeEmptyTable()...)
+	payload = append(payload, serializeShortString(mechanism)...)
+	payload = append(payload, serializeLongString(response)...)
+	payload = append(payload, serializeShortString("en_US")...)
 
 	return append(header, payload...)
+}
+
+func serializeConnectionStartOkResponse(username, password string) []byte {
+	response := []byte{0}
+	response = append(response, []byte(username)...)
+	response = append(response, 0)
+	response = append(response, []byte(password)...)
+	return response
+}
+
+func serializeEmptyTable() []byte {
+	lengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBytes, 0)
+	return lengthBytes
+}
+
+func serializeLongString(data []byte) []byte {
+	lengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBytes, uint32(len(data)))
+	result := append(lengthBytes, data...)
+	return result
 }
 
 func serializeShortString(s string) []byte {
@@ -451,7 +494,40 @@ Expected: PASS
 
 ```bash
 git add proxy/credentials.go proxy/credentials_test.go
-git commit -m "feat: add AMQP credential parsing"
+git commit -m "feat: add AMQP credential parsing (Connection.StartOk)"
+```
+
+---
+
+## Task 3.1: Fix Incorrect Connection.Open Implementation
+
+**Context:** Previous implementation incorrectly parsed Connection.Open for credentials.
+Per AMQP 0-9-1 spec, credentials are in Connection.StartOk, not Connection.Open.
+
+**Files:**
+- Modify: `proxy/credentials.go`
+- Modify: `proxy/credentials_test.go`
+
+**Step 1: Deprecate incorrect ParseConnectionOpen**
+
+```go
+// ParseConnectionOpen is DEPRECATED - do not use.
+// Credentials are extracted from Connection.StartOk, not Connection.Open.
+// Connection.Open only contains the vhost to connect to after authentication.
+func ParseConnectionOpen(data []byte) (*Credentials, error) {
+	return nil, errors.New("ParseConnectionOpen is deprecated. Use ParseConnectionStartOk for credentials.")
+}
+```
+
+**Step 2: Update tests**
+
+Remove or mark test as deprecated.
+
+**Step 3: Commit**
+
+```bash
+git add proxy/credentials.go proxy/credentials_test.go
+git commit -m "fix: deprecate incorrect Connection.Open credential parsing"
 ```
 
 ---
