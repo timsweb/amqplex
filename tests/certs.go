@@ -3,11 +3,13 @@ package tests
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
 	"os"
+	"time"
 )
 
 func GenerateTestCA() (*x509.Certificate, *rsa.PrivateKey) {
@@ -60,7 +62,7 @@ func GenerateServerCert(caCert *x509.Certificate, caKey *rsa.PrivateKey) *tls.Ce
 		panic(err)
 	}
 
-	cert, err := x509.ParseCertificate(certDER)
+	_, err = x509.ParseCertificate(certDER)
 	if err != nil {
 		panic(err)
 	}
@@ -88,7 +90,7 @@ func GenerateClientCert(caCert *x509.Certificate, caKey *rsa.PrivateKey) *tls.Ce
 		panic(err)
 	}
 
-	cert, err := x509.ParseCertificate(certDER)
+	_, err = x509.ParseCertificate(certDER)
 	if err != nil {
 		panic(err)
 	}
@@ -100,12 +102,13 @@ func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls
 	os.MkdirAll("test_certs", 0755)
 
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
-	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS8PrivateKey(caKey)})
+	caKeyBytes, _ := x509.MarshalPKCS8PrivateKey(caKey)
+	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: caKeyBytes})
 
-	if err := os.WriteFile("test_certs/ca.crt", caPEM.Bytes, 0644); err != nil {
+	if err := os.WriteFile("test_certs/ca.crt", caPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile("test_certs/ca.key", caKeyPEM.Bytes, 0600); err != nil {
+	if err := os.WriteFile("test_certs/ca.key", caKeyPEM, 0600); err != nil {
 		return err
 	}
 
