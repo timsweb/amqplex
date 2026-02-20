@@ -17,45 +17,13 @@ type ConnectionOpenFrame struct {
 	Password string
 }
 
+// ParseConnectionOpen is DEPRECATED - do not use for credential extraction.
+// Per AMQP 0-9-1 spec, credentials are extracted from Connection.StartOk (method 20),
+// not Connection.Open (method 40). Connection.Open only specifies which vhost to use
+// after authentication has already occurred.
+// Use ParseConnectionStartOk instead for credential extraction.
 func ParseConnectionOpen(data []byte) (*Credentials, error) {
-	header, err := ParseMethodHeader(data)
-	if err != nil {
-		return nil, err
-	}
-	if header.ClassID != 10 || header.MethodID != 40 {
-		return nil, errors.New("not a Connection.Open frame")
-	}
-
-	offset := 4
-
-	vhost, vhostLen, err := parseShortString(data[offset:])
-	if err != nil {
-		return nil, err
-	}
-	offset += vhostLen
-
-	_, reservedLen, err := parseShortString(data[offset:])
-	if err != nil {
-		return nil, err
-	}
-	offset += reservedLen
-
-	username, usernameLen, err := parseShortString(data[offset:])
-	if err != nil {
-		return nil, err
-	}
-	offset += usernameLen
-
-	password, _, err := parseShortString(data[offset:])
-	if err != nil {
-		return nil, err
-	}
-
-	return &Credentials{
-		Vhost:    vhost,
-		Username: username,
-		Password: password,
-	}, nil
+	return nil, errors.New("ParseConnectionOpen is deprecated. Use ParseConnectionStartOk for credential extraction (credentials are in Connection.StartOk, not Connection.Open)")
 }
 
 func parseShortString(data []byte) (string, int, error) {
@@ -69,19 +37,17 @@ func parseShortString(data []byte) (string, int, error) {
 	return string(data[1 : 1+length]), 1 + length, nil
 }
 
-func serializeConnectionOpen(vhost, username, password string) []byte {
+// serializeConnectionOpen is DEPRECATED - not used for credential extraction.
+// Kept for potential future use (parsing Connection.Open to get vhost).
+func serializeConnectionOpen(vhost string) []byte {
 	vhostBytes := serializeShortString(vhost)
 	reservedBytes := serializeShortString("")
-	usernameBytes := serializeShortString(username)
-	passwordBytes := serializeShortString(password)
 
 	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 40})
 
 	payload := make([]byte, 0)
 	payload = append(payload, vhostBytes...)
 	payload = append(payload, reservedBytes...)
-	payload = append(payload, usernameBytes...)
-	payload = append(payload, passwordBytes...)
 
 	return append(header, payload...)
 }

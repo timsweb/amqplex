@@ -5,12 +5,14 @@ import (
 	"testing"
 )
 
-func TestParseConnectionOpen(t *testing.T) {
-	data := serializeConnectionOpen("test-vhost", "user", "pass")
+// TestParseConnectionOpenDeprecated verifies that the incorrect implementation
+// is properly deprecated and returns an error directing to the correct method.
+func TestParseConnectionOpenDeprecated(t *testing.T) {
+	data := serializeConnectionOpen("test-vhost")
 
 	creds, err := ParseConnectionOpen(data)
-	assert.NoError(t, err)
-	assert.Equal(t, "test-vhost", creds.Vhost)
-	assert.Equal(t, "user", creds.Username)
-	assert.Equal(t, "pass", creds.Password)
+	assert.Error(t, err)
+	assert.Nil(t, creds)
+	assert.Contains(t, err.Error(), "deprecated")
+	assert.Contains(t, err.Error(), "ParseConnectionStartOk")
 }
