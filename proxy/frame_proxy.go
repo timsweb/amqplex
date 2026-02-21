@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"sync"
 )
 
 type FrameProxy struct {
 	ClientConn *ClientConnection
 	Writer     *bytes.Buffer
+	mu         sync.Mutex // Protect Writer from concurrent access
 }
 
 func NewFrameProxy(clientConn *ClientConnection) *FrameProxy {
@@ -16,39 +18,46 @@ func NewFrameProxy(clientConn *ClientConnection) *FrameProxy {
 	}
 }
 
+func (fp *FrameProxy) Reset() {
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	fp.Writer.Reset()
+}
+
 func (fp *FrameProxy) ProxyClientToUpstream(frame *Frame) error {
 	fp.ClientConn.Mu.RLock()
 	upstreamID, ok := fp.ClientConn.ChannelMapping[frame.Channel]
 	fp.ClientConn.Mu.RUnlock()
 
 	if !ok {
-		return nil // No upstream channel mapped yet, forward as-is
+		// No upstream channel mapped yet, forward as-is
+		return WriteFrame(fp.Writer, frame)
 	}
 
 	remapped := *frame
 	remapped.Channel = upstreamID
 
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
 	return WriteFrame(fp.Writer, &remapped)
 }
 
 func (fp *FrameProxy) ProxyUpstreamToClient(frame *Frame) error {
-	// Find which client channel maps to this upstream channel
+	// Use reverse mapping for O(1) lookup
 	fp.ClientConn.Mu.RLock()
-	var clientID uint16
-	for cid, uid := range fp.ClientConn.ChannelMapping {
-		if uid == frame.Channel {
-			clientID = cid
-			break
-		}
-	}
+	clientID, found := fp.ClientConn.ReverseMapping[frame.Channel]
 	fp.ClientConn.Mu.RUnlock()
 
-	if clientID == 0 {
-		return nil // No mapping, ignore
+	if !found {
+		// No mapping exists - this frame should be ignored
+		// Can happen for frames on unmapped upstream channels
+		return nil
 	}
 
 	remapped := *frame
 	remapped.Channel = clientID
 
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
 	return WriteFrame(fp.Writer, &remapped)
 }
