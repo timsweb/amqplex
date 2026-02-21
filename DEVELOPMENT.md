@@ -2,6 +2,36 @@
 
 Important learnings and constraints during development of AMQProxy.
 
+## Code Review Fixes (2025-02-19)
+
+### Critical Issues Fixed
+
+**1. Certificate Writing Bug**
+- **File:** tests/certs.go
+- **Problem:** Writing private keys to .crt files instead of certificates
+- **Impact:** TLS connections would fail
+- **Fix:** Write cert PEM to .crt and key PEM to .key
+
+**2. Frame Size Validation**
+- **File:** proxy/frame.go
+- **Problem:** ParseFrame allocated any size without limit
+- **Impact:** DoS vulnerability - malicious client could cause OOM
+- **Fix:** Add MaxFrameSize constant (1MB limit) and validate
+
+**3. Frame End Marker Validation**
+- **File:** proxy/frame.go
+- **Problem:** Not validating required 0xCE end marker
+- **Impact:** Protocol non-compliance, invalid frames accepted
+- **Fix:** Read and validate frame end marker in ParseFrame, write it in WriteFrame
+
+### Important Issues Fixed
+
+**4. Error Handling**
+- **File:** tests/certs.go
+- **Problem:** Multiple errors silently ignored (os.MkdirAll, MarshalPKCS8PrivateKey)
+- **Impact:** Silent failures, difficult debugging
+- **Fix:** Return errors from WriteCerts function
+
 ## Git Parallel Execution Issue
 
 ### Problem
