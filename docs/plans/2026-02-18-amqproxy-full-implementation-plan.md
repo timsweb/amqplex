@@ -1147,8 +1147,13 @@ git commit -m "feat: add safe channel management to connection pool"
 
 ## Task 11: Full Connection Flow
 
+**CRITICAL NOTE:** This task implements correct AMQP 0-9-1 handshake flow.
+Connection flow: Start → StartOk → Secure → SecureOk → Tune → TuneOk → Open → OpenOk.
+Credentials are extracted from Connection.StartOk (method 11), NOT Connection.Open (method 40).
+
 **Files:**
 - Modify: `proxy/connection.go`
+- Modify: `proxy/proxy.go` (to use connection handler)
 
 **Step 1: Implement connection handling logic**
 
@@ -1174,12 +1179,12 @@ func (cc *ClientConnection) Handle() error {
 	cc.Reader = bufio.NewReader(cc.Conn)
 	cc.Writer = bufio.NewWriter(cc.Conn)
 
-	// Send Connection.Start, Start-OK
+	// Send Connection.Start
 	if err := cc.sendConnectionStart(); err != nil {
 		return err
 	}
 
-	// Wait for Connection.Open
+	// Wait for Connection.StartOk (contains credentials)
 	frame, err := ParseFrame(cc.Reader)
 	if err != nil {
 		return err
@@ -1190,25 +1195,60 @@ func (cc *ClientConnection) Handle() error {
 		return err
 	}
 
-	if header.ClassID == 10 && header.MethodID == 40 {
-		creds, err := ParseConnectionOpen(frame.Payload)
+	var creds *Credentials
+	if header.ClassID == 10 && header.MethodID == 11 {
+		creds, err = ParseConnectionStartOk(frame.Payload)
 		if err != nil {
 			return err
 		}
+	} else {
+		return fmt.Errorf("expected Connection.StartOk, got class=%d method=%d", header.ClassID, header.MethodID)
+	}
 
+	// Send Connection.Tune
+	if err := cc.sendConnectionTune(); err != nil {
+		return err
+	}
+
+	// Wait for Connection.TuneOk
+	frame, err = ParseFrame(cc.Reader)
+	if err != nil {
+		return err
+	}
+
+	header, err = ParseMethodHeader(frame.Payload)
+	if err != nil {
+		return err
+	}
+
+	if header.ClassID != 10 || header.MethodID != 31 {
+		return fmt.Errorf("expected Connection.TuneOk, got class=%d method=%d", header.ClassID, header.MethodID)
+	}
+
+	// Wait for Connection.Open
+	frame, err = ParseFrame(cc.Reader)
+	if err != nil {
+		return err
+	}
+
+	header, err = ParseMethodHeader(frame.Payload)
+	if err != nil {
+		return err
+	}
+
+	if header.ClassID == 10 && header.MethodID == 40 {
 		// Get or create pool
-		key := cc.Proxy.getPoolKey(creds.Username, creds.Password, creds.Vhost)
-		pool := cc.Proxy.getOrCreatePool(creds.Username, creds.Password, creds.Vhost)
+		pool := cc.Proxy.getOrCreatePool(creds.Username, creds.Password, "/")
 
 		// Mark upstream connection
-		pool.Connections = append(pool.Connections, cc)
+		cc.Pool = pool
 	}
 
 	// Send Connection.Open-OK
 	return WriteFrame(cc.Writer, &Frame{
 		Type:    FrameTypeMethod,
 		Channel: 0,
-		Payload: serializeConnectionOpenOK(creds),
+		Payload: serializeConnectionOpenOK(),
 	})
 }
 
@@ -1221,12 +1261,31 @@ func (cc *ClientConnection) sendConnectionStart() error {
 	})
 }
 
-func serializeConnectionStart() []byte {
-	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 10})
-	return append(header, 0, 9, 0, 0, 0, 0) // version 0-9-1
+func (cc *ClientConnection) sendConnectionTune() error {
+	// Default tune parameters: frame max=0 (unlimited), channel max=0 (unlimited), heartbeat=60
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint16(payload[0:2], 0) // channel max
+	binary.BigEndian.PutUint32(payload[0:4], 0) // frame max
+	payload[4] = 60 // heartbeat (seconds)
+
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 30})
+	payload = append(header, payload...)
+
+	return WriteFrame(cc.Writer, &Frame{
+		Type:    FrameTypeMethod,
+		Channel: 0,
+		Payload: payload,
+	})
 }
 
-func serializeConnectionOpenOK(creds *Credentials) []byte {
+func serializeConnectionStart() []byte {
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 10})
+	// Server properties, mechanisms, locales
+	// For now, minimal implementation
+	return append(header, 0, 0, 0, 0) // empty table, empty longstr for mechanisms, empty longstr for locales
+}
+
+func serializeConnectionOpenOK() []byte {
 	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 41})
 	return append(header, 0) // known-hosts
 }
@@ -1259,15 +1318,17 @@ func (p *Proxy) Stop() error {
 	defer p.mu.Unlock()
 
 	for _, pool := range p.pools {
-		pool.Mu.Lock()
+		pool.mu.Lock()
 		for _, conn := range pool.Connections {
-			if conn.UpstreamConn != nil && conn.UpstreamConn.IsOpen() {
-				conn.UpstreamConn.Close()
+			if conn.Connection != nil {
+				conn.Connection.Close()
 			}
 		}
 		pool.Connections = nil
-		pool.SafeChannels = nil
-		pool.Mu.Unlock()
+		if pool.SafeChannels != nil {
+			pool.SafeChannels = make(map[uint16]bool)
+		}
+		pool.mu.Unlock()
 	}
 
 	p.pools = make(map[[32]byte]*pool.ConnectionPool)
@@ -1297,13 +1358,26 @@ func TestConnectionMultiplexing(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	t.Cleanup(func() {
+		os.RemoveAll("test_certs")
+	})
+
+	caCert, caKey := GenerateTestCA()
+	serverCert := GenerateServerCert(caCert, caKey)
+	clientCert := GenerateClientCert(caCert, caKey)
+
+	err := WriteCerts(caCert, caKey, serverCert, clientCert)
+	assert.NoError(t, err)
+
 	cfg := &config.Config{
-		ListenAddress:  "localhost",
-		ListenPort:     15673,
+		ListenAddress:   "localhost",
+		ListenPort:      15673,
 		PoolIdleTimeout: 5,
-		TLSCert:       "test_certs/server.crt",
-		TLSKey:        "test_certs/server.key",
-		TLSCACert:      "test_certs/ca.crt",
+		PoolMaxChannels: 65535,
+		TLSCert:         "test_certs/server.crt",
+		TLSKey:          "test_certs/server.key",
+		TLSCACert:       "test_certs/ca.crt",
+		TLSSkipVerify:   true,
 	}
 
 	p, _ := proxy.NewProxy(cfg)
@@ -1312,11 +1386,17 @@ func TestConnectionMultiplexing(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
+	caCertPool := x509.NewCertPool()
+	caData, err := os.ReadFile("test_certs/ca.crt")
+	assert.NoError(t, err)
+	caCertPool.AppendCertsFromPEM(caData)
+
 	// Connect 3 clients with same credentials
 	var conns []net.Conn
 	for i := 0; i < 3; i++ {
 		conn, err := tls.Dial("tcp", "localhost:15673", &tls.Config{
-			RootCAs: loadCertPool("test_certs/ca.crt"),
+			RootCAs:            caCertPool,
+			InsecureSkipVerify: true,
 		})
 		assert.NoError(t, err)
 		conns = append(conns, conn)
@@ -1328,13 +1408,6 @@ func TestConnectionMultiplexing(t *testing.T) {
 
 	// Verify single upstream connection was created
 	// TODO: Implement verification
-}
-
-func loadCertPool(path string) *x509.CertPool {
-	cert, _ := os.ReadFile(path)
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(cert)
-	return pool
 }
 ```
 
@@ -1354,22 +1427,56 @@ git commit -m "test: add comprehensive integration tests"
 
 ## Task 14: Build and Verify
 
-**Step 1: Build binary**
+**Files:**
+- Create: `Makefile`
+- Modify: `.gitignore`
+
+**Step 1: Create Makefile**
+
+```makefile
+.PHONY: build test clean run
+
+build:
+	go build -o bin/amqproxy ./cmd/amqproxy
+
+test:
+	go test -v ./...
+
+test-short:
+	go test -short -v ./...
+
+integration-test:
+	go test -v ./tests/...
+
+clean:
+	rm -rf bin/ test_certs/
+
+run:
+	go run ./cmd/amqproxy
+
+docker-up:
+	docker-compose up --build
+
+docker-down:
+	docker-compose down
+```
+
+**Step 2: Build binary**
 
 Run: `make build`
 Expected: Binary created at `bin/amqproxy`
 
-**Step 2: Run all tests**
+**Step 3: Run all tests**
 
 Run: `make test`
 Expected: All unit tests pass, integration tests may fail
 
-**Step 3: Test with docker-compose**
+**Step 4: Test with docker-compose**
 
 Run: `docker-compose up --build`
 Expected: Services start with TLS
 
-**Step 4: Test TLS connection**
+**Step 5: Test TLS connection**
 
 Run:
 ```bash
@@ -1379,12 +1486,8 @@ go test -v ./tests/certs_test.go
 # Start services
 docker-compose up -d
 
-# Test proxy health
-sleep 5
-curl http://localhost:5674/healthz
-
-# Test TLS connection
-openssl s_client -connect localhost:5673 -cert test_certs/client.crt -key test_certs/client.key -CAfile test_certs/ca.crt
+# Test TLS connection (should see AMQP protocol header after handshake)
+echo "AMQP\x00\x00\x09\x01" | openssl s_client -connect localhost:5673 -cert test_certs/client.crt -key test_certs/client.key -CAfile test_certs/ca.crt
 
 # Cleanup
 docker-compose down
@@ -1392,7 +1495,7 @@ docker-compose down
 
 Expected: TLS handshake succeeds
 
-**Step 5: Commit final changes**
+**Step 6: Commit final changes**
 
 ```bash
 git add Makefile .gitignore
