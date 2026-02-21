@@ -17,6 +17,10 @@ func TestTLSConnection(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	t.Cleanup(func() {
+		os.RemoveAll("test_certs")
+	})
+
 	caCert, caKey := GenerateTestCA()
 	serverCert := GenerateServerCert(caCert, caKey)
 	clientCert := GenerateClientCert(caCert, caKey)
@@ -65,14 +69,4 @@ func TestTLSConnection(t *testing.T) {
 
 	_, err = conn.Write([]byte("AMQP\x00\x00\x09\x01"))
 	assert.NoError(t, err)
-}
-
-func loadCertPool(path string) (*x509.CertPool, error) {
-	cert, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(cert)
-	return pool, nil
 }
