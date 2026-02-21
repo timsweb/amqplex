@@ -245,3 +245,21 @@ https://www.rabbitmq.com/amqp-0-9-1-reference.html#connection.start-ok
   - sendConnectionTune()
   - Handle() after Connection.OpenOK
 - **Context:** bufio.Writer buffers writes; must flush to actually send data
+
+## Tech Debt
+
+### Task 12 - Proxy Stop Method (2025-02-19)
+
+**1. Integration Test Port Conflicts (tests/integration_tls_test.go)**
+- **Type:** Testing
+- **Item:** TestTLSConnection and TestConnectionMultiplexing both use port 15673
+- **Context:** When running all tests together, second test may fail due to port conflict
+- **Action:** Use different ports or random ports for each test
+- **Priority:** Medium - tests work individually but fail when run together
+
+**2. ClientConnection.Handle() Not Integrated (proxy/proxy.go)**
+- **Type:** Feature
+- **Item:** handleConnection doesn't call ClientConnection.Handle()
+- **Context:** Task 11 implemented full AMQP flow in ClientConnection.Handle() but proxy.go's handleConnection only parses protocol header and returns dummy credentials
+- **Action:** Integrate ClientConnection.Handle() into proxy.go's handleConnection
+- **Priority:** High - required for actual proxying functionality
