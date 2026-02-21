@@ -201,3 +201,34 @@ git <command>
 
 ### Reference
 https://www.rabbitmq.com/amqp-0-9-1-reference.html#connection.start-ok
+
+## Tech Debt
+
+### Task 10 - Enhanced Connection Pool (2025-02-19)
+
+**1. IsSafeChannel Documentation (pool/pool.go:82)**
+- **Type:** Documentation
+- **Item:** IsSafeChannel returns false for non-existent channels (Go map zero value)
+- **Context:** This is correct behavior - unmarked channels are unsafe by default
+- **Action:** Add comment explaining zero-value semantics for clarity
+- **Priority:** Low - implementation is correct, just needs documentation
+
+**2. Test Coverage Expansion (pool/pool_test.go:23-30)**
+- **Type:** Testing
+- **Item:** TestSafeChannelManagement only covers happy path
+- **Context:** Currently tests add/remove single channel
+- **Action:** Add edge cases:
+  - Multiple channels added/checked
+  - Removing non-existent channel (idempotent)
+  - Checking non-existent channel (returns false)
+- **Priority:** Low - basic functionality tested, edge cases not critical
+
+**3. LastUsed Update Timing (pool/pool.go:82)**
+- **Type:** Feature
+- **Item:** LastUsed only set when safe channel is added
+- **Context:** May need updates in other operations:
+  - When connection is used for operations
+  - When channels are closed
+  - For idle timeout calculations
+- **Action:** Update LastUsed in relevant places as needed
+- **Priority:** TBD - depends on idle timeout implementation requirements
