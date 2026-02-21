@@ -17,5 +17,5 @@ func TestNewProxy(t *testing.T) {
 	proxy, err := NewProxy(cfg)
 	assert.NoError(t, err)
 	assert.NotNil(t, proxy)
-	assert.Equal(t, "localhost:5673", proxy.listenAddr)
+	assert.NotNil(t, proxy.listener)
 }

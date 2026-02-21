@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/tim/amqproxy/config"
 	"github.com/tim/amqproxy/pool"
-	"github.com/tim/amqproxy/tlsutil"
 )
 
 const (
@@ -25,36 +23,37 @@ type AMQPHandshake struct {
 }
 
 type Proxy struct {
-	listenAddr string
-	config     *config.Config
-	pools      map[[32]byte]*pool.ConnectionPool // key: hash of credentials
-	tlsConfig  *tls.Config
-	mu         sync.RWMutex
+	listener *AMQPListener
+	config   *config.Config
+	pools    map[[32]byte]*pool.ConnectionPool // key: hash of credentials
+	mu       sync.RWMutex
 }
 
 func NewProxy(cfg *config.Config) (*Proxy, error) {
-	tlsConfig, err := tlsutil.LoadTLSConfig(
-		cfg.TLSCACert,
-		cfg.TLSClientCert,
-		cfg.TLSClientKey,
-		cfg.TLSSkipVerify,
-	)
+	listener, err := NewAMQPListener(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load TLS config: %w", err)
+		return nil, fmt.Errorf("failed to create listener: %w", err)
 	}
 
 	return &Proxy{
-		listenAddr: fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort),
-		config:     cfg,
-		pools:      make(map[[32]byte]*pool.ConnectionPool),
-		tlsConfig:  tlsConfig,
+		listener: listener,
+		config:   cfg,
+		pools:    make(map[[32]byte]*pool.ConnectionPool),
 	}, nil
 }
 
 func (p *Proxy) Start() error {
-	listener, err := net.Listen("tcp", p.listenAddr)
+	var listener net.Listener
+	var err error
+
+	if p.config.TLSCert != "" && p.config.TLSKey != "" {
+		listener, err = p.listener.StartTLS()
+	} else {
+		listener, err = p.listener.StartPlain()
+	}
+
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", p.listenAddr, err)
+		return fmt.Errorf("failed to start listener: %w", err)
 	}
 	defer listener.Close()
 
