@@ -2,6 +2,78 @@
 
 Important learnings and constraints during development of AMQProxy.
 
+## Code Review Fixes (2025-02-19)
+
+### Critical Issues Fixed
+
+**1. Certificate Writing Bug**
+- **File:** tests/certs.go
+- **Problem:** Writing private keys to .crt files instead of certificates
+- **Impact:** TLS connections would fail
+- **Fix:** Write cert PEM to .crt and key PEM to .key
+
+**2. Frame Size Validation**
+- **File:** proxy/frame.go
+- **Problem:** ParseFrame allocated any size without limit
+- **Impact:** DoS vulnerability - malicious client could cause OOM
+- **Fix:** Add MaxFrameSize constant (1MB limit) and validate
+
+**3. Frame End Marker Validation**
+- **File:** proxy/frame.go
+- **Problem:** Not validating required 0xCE end marker
+- **Impact:** Protocol non-compliance, invalid frames accepted
+- **Fix:** Read and validate frame end marker in ParseFrame, write it in WriteFrame
+
+**4. Thread Safety - Writer Race Condition** (frame_proxy.go:10, 25, 35, 48, 58)
+- **Problem:** FrameProxy.Writer was *bytes.Buffer with NO synchronization
+- **Impact:** Multiple goroutines would corrupt buffer
+- **Fix:** Add mutex to FrameProxy, protect all Writer access
+
+**5. Reset() Function Corruption** (frame_proxy.go:22-25)
+- **Problem:** Reset() function had wrong body (WriteFrame call)
+- **Impact:** Would write wrong data instead of clearing buffer
+- **Fix:** Implement proper Reset() that calls bytes.Buffer.Reset()
+
+### Important Issues Fixed
+
+**6. Error Handling**
+- **File:** tests/certs.go
+- **Problem:** Multiple errors silently ignored (os.MkdirAll, MarshalPKCS8PrivateKey)
+- **Impact:** Silent failures, difficult debugging
+- **Fix:** Return errors from WriteCerts function
+
+**7. O(n) Reverse Lookup** (connection.go:48-54, frame_proxy.go:48-54)
+- **Problem:** Iterating entire ChannelMapping to find client channel for upstream
+- **Impact:** O(n) per frame instead of O(1), problematic at scale
+- **Fix:** Add ReverseMapping to ClientConnection, maintain both directions
+
+**8. Silent Frame Loss** (frame_proxy.go:26, 52)
+- **Problem:** Returns nil for unmapped channels, caller can't distinguish success/failure
+- **Impact:** Can drop frames on unmapped channels
+- **Fix:** Document behavior, return nil for unmapped (documented as expected)
+
+**9. Incorrect Zero Check** (frame_proxy.go:56)
+- **Problem:** `if clientID == 0` - channel 0 IS valid for connection methods
+- **Impact:** Would drop valid frames
+- **Fix:** Use boolean `found` flag instead of zero check
+
+**10. Buffer Type Issue** (frame_proxy.go:10)
+- **Problem:** Writer was *bytes.Buffer (pointer), but bytes.Buffer has value receivers
+- **Impact:** Type mismatch with io.Writer interface
+- **Fix:** Use bytes.Buffer (value type) not pointer
+
+### Test Coverage Improvements
+
+**11. Frame Proxy Test Coverage** (frame_proxy_test.go)
+- **Before:** Only tested ProxyClientToUpstream with empty mapping
+- **After:** Added tests for:
+  - ProxyClientToUpstream with mapping
+  - ProxyUpstreamToClient with mapping
+  - ProxyUpstreamToClient no mapping
+  - FrameProxy.Reset
+  - Channel 0 validation
+- **Impact:** All frame proxying paths covered
+
 ## AMQP Spec Review Findings (2025-02-19)
 
 ### Critical Issue: Connection.StartOk Method ID
