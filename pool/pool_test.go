@@ -28,6 +28,28 @@ func TestSafeChannelManagement(t *testing.T) {
 	assert.False(t, pool.IsSafeChannel(5))
 }
 
+func TestPoolClose(t *testing.T) {
+	pool := NewConnectionPool("user", "pass", "/", 5, 65535)
+
+	conn1 := &mockConnection{}
+	conn2 := &mockConnection{}
+	pool.AddConnection(conn1)
+	pool.AddConnection(conn2)
+
+	pool.AddSafeChannel(1)
+	pool.AddSafeChannel(2)
+
+	assert.Equal(t, 2, len(pool.Connections))
+	assert.True(t, pool.IsSafeChannel(1))
+	assert.True(t, pool.IsSafeChannel(2))
+
+	pool.Close()
+
+	assert.Nil(t, pool.Connections)
+	assert.False(t, pool.IsSafeChannel(1))
+	assert.False(t, pool.IsSafeChannel(2))
+}
+
 type mockConnection struct{}
 
 func (m *mockConnection) IsOpen() bool {
