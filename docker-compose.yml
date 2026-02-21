@@ -2,12 +2,13 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     ports:
-      - "5672:5672"
+      - "5671:5671"
       - "15672:15672"
     environment:
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit loopback_users []
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      - ./test_certs:/etc/rabbitmq/certs:ro
 
   amqproxy:
     build: .
@@ -15,9 +16,16 @@ services:
       - "5673:5673"
       - "5674:5674"
     environment:
-      - AMQP_UPSTREAM_URL=amqp://rabbitmq:5672
+      - AMQP_UPSTREAM_URL=amqps://rabbitmq:5671
       - AMQP_LISTEN_ADDRESS=0.0.0.0
       - AMQP_LISTEN_PORT=5673
+      - AMQP_TLS_ENABLED=true
+      - AMQP_TLS_CERT=/app/test_certs/server.crt
+      - AMQP_TLS_KEY=/app/test_certs/server.key
+      - AMQP_UPSTREAM_TLS_ENABLED=true
+      - AMQP_UPSTREAM_CA=/app/test_certs/ca.crt
+    volumes:
+      - ./test_certs:/app/test_certs:ro
     depends_on:
       - rabbitmq
 
