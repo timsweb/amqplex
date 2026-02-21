@@ -1,8 +1,13 @@
 package proxy
 
 import (
+	"bufio"
+	"encoding/binary"
+	"fmt"
 	"net"
 	"sync"
+
+	"github.com/tim/amqproxy/pool"
 )
 
 type ClientConnection struct {
@@ -13,6 +18,9 @@ type ClientConnection struct {
 	ReverseMapping map[uint16]uint16 // For O(1) upstream → client lookup
 	Mu             sync.RWMutex
 	Proxy          *Proxy
+	Reader         *bufio.Reader
+	Writer         *bufio.Writer
+	Pool           *pool.ConnectionPool // Reference to the pool this connection belongs to
 }
 
 type ClientChannel struct {
@@ -78,4 +86,110 @@ func (cc *ClientConnection) RecordChannelOperation(channelID uint16, operation s
 	if !isSafe {
 		channel.Safe = false
 	}
+}
+
+func (cc *ClientConnection) Handle() error {
+	cc.Reader = bufio.NewReader(cc.Conn)
+	cc.Writer = bufio.NewWriter(cc.Conn)
+
+	if err := cc.sendConnectionStart(); err != nil {
+		return err
+	}
+
+	frame, err := ParseFrame(cc.Reader)
+	if err != nil {
+		return err
+	}
+
+	header, err := ParseMethodHeader(frame.Payload)
+	if err != nil {
+		return err
+	}
+
+	var creds *Credentials
+	if header.ClassID == 10 && header.MethodID == 11 {
+		creds, err = ParseConnectionStartOk(frame.Payload)
+		if err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("expected Connection.StartOk, got class=%d method=%d", header.ClassID, header.MethodID)
+	}
+
+	if err := cc.sendConnectionTune(); err != nil {
+		return err
+	}
+
+	frame, err = ParseFrame(cc.Reader)
+	if err != nil {
+		return err
+	}
+
+	header, err = ParseMethodHeader(frame.Payload)
+	if err != nil {
+		return err
+	}
+
+	if header.ClassID != 10 || header.MethodID != 31 {
+		return fmt.Errorf("expected Connection.TuneOk, got class=%d method=%d", header.ClassID, header.MethodID)
+	}
+
+	frame, err = ParseFrame(cc.Reader)
+	if err != nil {
+		return err
+	}
+
+	header, err = ParseMethodHeader(frame.Payload)
+	if err != nil {
+		return err
+	}
+
+	if header.ClassID == 10 && header.MethodID == 40 {
+		pool := cc.Proxy.getOrCreatePool(creds.Username, creds.Password, "/")
+
+		cc.Mu.Lock()
+		cc.Pool = pool
+		cc.Mu.Unlock()
+	}
+
+	return WriteFrame(cc.Writer, &Frame{
+		Type:    FrameTypeMethod,
+		Channel: 0,
+		Payload: serializeConnectionOpenOK(),
+	})
+}
+
+func (cc *ClientConnection) sendConnectionStart() error {
+	payload := serializeConnectionStart()
+	return WriteFrame(cc.Writer, &Frame{
+		Type:    FrameTypeMethod,
+		Channel: 0,
+		Payload: payload,
+	})
+}
+
+func (cc *ClientConnection) sendConnectionTune() error {
+	payload := make([]byte, 9)
+	binary.BigEndian.PutUint16(payload[0:2], 0)
+	binary.BigEndian.PutUint32(payload[2:6], 0)
+	payload[6] = 60
+
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 30})
+	payload = append(header, payload...)
+
+	return WriteFrame(cc.Writer, &Frame{
+		Type:    FrameTypeMethod,
+		Channel: 0,
+		Payload: payload,
+	})
+}
+
+func serializeConnectionStart() []byte {
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 10})
+	return append(header, 0, 0, 0, 0)
+}
+
+func serializeConnectionOpenOK() []byte {
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 41})
+	return append(header, 0)
 }
