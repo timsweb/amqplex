@@ -9,6 +9,7 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./test_certs:/etc/rabbitmq/certs:ro
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
 
   amqproxy:
     build: .
