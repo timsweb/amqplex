@@ -18,6 +18,16 @@ func TestConnectionPool(t *testing.T) {
 	assert.Equal(t, conn, retrieved.Connection)
 }
 
+func TestSafeChannelManagement(t *testing.T) {
+	pool := NewConnectionPool("user", "pass", "/", 5, 65535)
+
+	pool.AddSafeChannel(5)
+	assert.True(t, pool.IsSafeChannel(5))
+
+	pool.RemoveSafeChannel(5)
+	assert.False(t, pool.IsSafeChannel(5))
+}
+
 type mockConnection struct{}
 
 func (m *mockConnection) IsOpen() bool {
