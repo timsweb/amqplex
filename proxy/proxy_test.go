@@ -1,9 +1,10 @@
 package proxy
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/tim/amqproxy/config"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/timsweb/amqproxy/config"
 )
 
 func TestNewProxy(t *testing.T) {

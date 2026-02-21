@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/proxy"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/proxy"
 )
 
 func TestTLSConnection(t *testing.T) {

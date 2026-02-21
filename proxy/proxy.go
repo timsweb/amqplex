@@ -7,8 +7,8 @@ import (
 	"net"
 	"sync"
 
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/pool"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/pool"
 )
 
 const (

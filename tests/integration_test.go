@@ -1,12 +1,13 @@
 package tests
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/proxy"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/proxy"
 )
 
 func TestProxyIntegration(t *testing.T) {

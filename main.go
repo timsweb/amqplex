@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/health"
-	"github.com/tim/amqproxy/proxy"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/health"
+	"github.com/timsweb/amqproxy/proxy"
 )
 
 func main() {

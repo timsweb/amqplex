@@ -780,8 +780,8 @@ import (
 	"fmt"
 	"net"
 	"crypto/tls"
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/tlsutil"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/tlsutil"
 )
 
 type AMQPListener struct {
@@ -856,9 +856,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/pool"
-	"github.com/tim/amqproxy/tlsutil"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/pool"
+	"github.com/timsweb/amqproxy/tlsutil"
 )
 
 type Proxy struct {
@@ -1018,8 +1018,8 @@ import (
 	"testing"
 	"time"
 	"github.com/stretchr/testify/assert"
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/proxy"
+	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqproxy/proxy"
 )
 
 func TestTLSConnection(t *testing.T) {

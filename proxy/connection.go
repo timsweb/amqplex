@@ -7,7 +7,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/tim/amqproxy/pool"
+	"github.com/timsweb/amqproxy/pool"
 )
 
 type ClientConnection struct {
