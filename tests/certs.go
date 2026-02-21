@@ -99,10 +99,15 @@ func GenerateClientCert(caCert *x509.Certificate, caKey *rsa.PrivateKey) *tls.Ce
 }
 
 func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls.Certificate, clientCert *tls.Certificate) error {
-	os.MkdirAll("test_certs", 0755)
+	if err := os.MkdirAll("test_certs", 0755); err != nil {
+		return err
+	}
 
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
-	caKeyBytes, _ := x509.MarshalPKCS8PrivateKey(caKey)
+	caKeyBytes, err := x509.MarshalPKCS8PrivateKey(caKey)
+	if err != nil {
+		return err
+	}
 	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: caKeyBytes})
 
 	if err := os.WriteFile("test_certs/ca.crt", caPEM, 0644); err != nil {
@@ -112,19 +117,31 @@ func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls
 		return err
 	}
 
-	serverCertBytes, _ := x509.MarshalPKCS8PrivateKey(serverCert.PrivateKey)
-	if err := os.WriteFile("test_certs/server.crt", serverCertBytes, 0644); err != nil {
+	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[0]})
+	serverCertKeyBytes, err := x509.MarshalPKCS8PrivateKey(serverCert.PrivateKey)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile("test_certs/server.key", serverCertBytes, 0600); err != nil {
+	serverCertKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: serverCertKeyBytes})
+
+	if err := os.WriteFile("test_certs/server.crt", serverCertPEM, 0644); err != nil {
+		return err
+	}
+	if err := os.WriteFile("test_certs/server.key", serverCertKeyPEM, 0600); err != nil {
 		return err
 	}
 
-	clientCertBytes, _ := x509.MarshalPKCS8PrivateKey(clientCert.PrivateKey)
-	if err := os.WriteFile("test_certs/client.crt", clientCertBytes, 0644); err != nil {
+	clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCert.Certificate[0]})
+	clientCertKeyBytes, err := x509.MarshalPKCS8PrivateKey(clientCert.PrivateKey)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile("test_certs/client.key", clientCertBytes, 0600); err != nil {
+	clientCertKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: clientCertKeyBytes})
+
+	if err := os.WriteFile("test_certs/client.crt", clientCertPEM, 0644); err != nil {
+		return err
+	}
+	if err := os.WriteFile("test_certs/client.key", clientCertKeyPEM, 0600); err != nil {
 		return err
 	}
 

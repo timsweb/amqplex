@@ -26,7 +26,10 @@ type MethodHeader struct {
 	MethodID uint16
 }
 
-const ProtocolHeader = "AMQP\x00\x00\x09\x01"
+const (
+	ProtocolHeader = "AMQP\x00\x00\x09\x01"
+	MaxFrameSize   = 1 * 1024 * 1024 // 1MB (AMQP spec max is 65535, but allow larger for practical use)
+)
 
 func ParseFrame(r io.Reader) (*Frame, error) {
 	header := make([]byte, 7)
@@ -38,9 +41,22 @@ func ParseFrame(r io.Reader) (*Frame, error) {
 	channel := binary.BigEndian.Uint16(header[1:3])
 	size := binary.BigEndian.Uint32(header[3:7])
 
+	if size > MaxFrameSize {
+		return nil, errors.New("frame size exceeds maximum")
+	}
+
 	payload := make([]byte, size)
 	if _, err := io.ReadFull(r, payload); err != nil {
 		return nil, err
+	}
+
+	// Read and validate frame end marker
+	endMarker := make([]byte, 1)
+	if _, err := io.ReadFull(r, endMarker); err != nil {
+		return nil, err
+	}
+	if endMarker[0] != 0xCE {
+		return nil, errors.New("invalid frame end marker")
 	}
 
 	return &Frame{
@@ -51,6 +67,10 @@ func ParseFrame(r io.Reader) (*Frame, error) {
 }
 
 func WriteFrame(w io.Writer, frame *Frame) error {
+	if len(frame.Payload) > MaxFrameSize {
+		return errors.New("frame size exceeds maximum")
+	}
+
 	header := make([]byte, 7)
 	header[0] = byte(frame.Type)
 	binary.BigEndian.PutUint16(header[1:3], frame.Channel)
@@ -62,6 +82,13 @@ func WriteFrame(w io.Writer, frame *Frame) error {
 	if _, err := w.Write(frame.Payload); err != nil {
 		return err
 	}
+
+	// Write frame end marker
+	endMarker := []byte{0xCE}
+	if _, err := w.Write(endMarker); err != nil {
+		return err
+	}
+
 	return nil
 }
 
