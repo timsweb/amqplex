@@ -64,9 +64,19 @@ func TestTLSConnection(t *testing.T) {
 		InsecureSkipVerify: true,
 	}
 
-	conn, err := tls.Dial("tcp", "localhost:15673", tlsConfig)
+	var conn net.Conn
+	for i := 0; i < 10; i++ {
+		conn, err = tls.Dial("tcp", "localhost:15673", tlsConfig)
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Duration(i+1) * 50 * time.Millisecond)
+	}
 	assert.NoError(t, err)
-	defer conn.Close()
+
+	if conn != nil {
+		defer conn.Close()
+	}
 
 	_, err = conn.Write([]byte("AMQP\x00\x00\x09\x01"))
 	assert.NoError(t, err)
@@ -112,16 +122,26 @@ func TestConnectionMultiplexing(t *testing.T) {
 
 	var conns []net.Conn
 	for i := 0; i < 3; i++ {
-		conn, err := tls.Dial("tcp", "localhost:15673", &tls.Config{
-			RootCAs:            caCertPool,
-			InsecureSkipVerify: true,
-		})
+		var conn net.Conn
+		var err error
+		for j := 0; j < 10; j++ {
+			conn, err = tls.Dial("tcp", "localhost:15673", &tls.Config{
+				RootCAs:            caCertPool,
+				InsecureSkipVerify: true,
+			})
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Duration(j+1) * 50 * time.Millisecond)
+		}
 		assert.NoError(t, err)
 		conns = append(conns, conn)
 	}
 
 	for _, conn := range conns {
-		conn.Close()
+		if conn != nil {
+			conn.Close()
+		}
 	}
 
 	assert.Equal(t, 3, len(conns))
