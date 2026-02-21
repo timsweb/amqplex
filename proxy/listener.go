@@ -2,10 +2,12 @@ package proxy
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"github.com/tim/amqproxy/config"
-	"github.com/tim/amqproxy/tlsutil"
 	"net"
+	"os"
+
+	"github.com/tim/amqproxy/config"
 )
 
 type AMQPListener struct {
@@ -15,18 +17,32 @@ type AMQPListener struct {
 
 func NewAMQPListener(cfg *config.Config) (*AMQPListener, error) {
 	var tlsConfig *tls.Config
-	var err error
 
-	if cfg.TLSCACert != "" || cfg.TLSClientCert != "" || cfg.TLSClientKey != "" {
-		tlsConfig, err = tlsutil.LoadTLSConfig(
-			cfg.TLSCACert,
-			cfg.TLSClientCert,
-			cfg.TLSClientKey,
-			cfg.TLSSkipVerify,
-		)
+	// Load server TLS certificates if provided
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load TLS config: %w", err)
+			return nil, fmt.Errorf("failed to load server TLS cert/key pair: %w", err)
 		}
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+	}
+
+	// Load CA certificate for client verification (optional)
+	if cfg.TLSCACert != "" {
+		caCert, err := os.ReadFile(cfg.TLSCACert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM([]byte(caCert)) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{}
+		}
+		tlsConfig.ClientCAs = caCertPool
 	}
 
 	return &AMQPListener{

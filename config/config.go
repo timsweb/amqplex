@@ -13,10 +13,14 @@ type Config struct {
 	PoolIdleTimeout int
 	PoolMaxChannels int
 	UpstreamURL     string
-	TLSCACert       string
-	TLSClientCert   string
-	TLSClientKey    string
-	TLSSkipVerify   bool
+	// Server TLS configuration (for accepting connections)
+	TLSCert string
+	TLSKey  string
+	// Client TLS configuration (for connecting to upstream)
+	TLSCACert     string
+	TLSClientCert string
+	TLSClientKey  string
+	TLSSkipVerify bool
 }
 
 func LoadConfig(configPath string, envPrefix string) (*Config, error) {
@@ -51,10 +55,14 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 		PoolIdleTimeout: v.GetInt("pool.idle_timeout"),
 		PoolMaxChannels: v.GetInt("pool.max_channels"),
 		UpstreamURL:     v.GetString("upstream.url"),
-		TLSCACert:       v.GetString("tls.ca_cert"),
-		TLSClientCert:   v.GetString("tls.client_cert"),
-		TLSClientKey:    v.GetString("tls.client_key"),
-		TLSSkipVerify:   v.GetBool("tls.skip_verify"),
+		// Server TLS fields
+		TLSCert: v.GetString("tls.cert"),
+		TLSKey:  v.GetString("tls.key"),
+		// Client TLS fields
+		TLSCACert:     v.GetString("tls.ca_cert"),
+		TLSClientCert: v.GetString("tls.client_cert"),
+		TLSClientKey:  v.GetString("tls.client_key"),
+		TLSSkipVerify: v.GetBool("tls.skip_verify"),
 	}
 
 	return cfg, nil
