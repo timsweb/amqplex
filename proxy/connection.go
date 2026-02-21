@@ -152,20 +152,26 @@ func (cc *ClientConnection) Handle() error {
 		cc.Mu.Unlock()
 	}
 
-	return WriteFrame(cc.Writer, &Frame{
+	if err := WriteFrame(cc.Writer, &Frame{
 		Type:    FrameTypeMethod,
 		Channel: 0,
 		Payload: serializeConnectionOpenOK(),
-	})
+	}); err != nil {
+		return err
+	}
+	return cc.Writer.Flush()
 }
 
 func (cc *ClientConnection) sendConnectionStart() error {
 	payload := serializeConnectionStart()
-	return WriteFrame(cc.Writer, &Frame{
+	if err := WriteFrame(cc.Writer, &Frame{
 		Type:    FrameTypeMethod,
 		Channel: 0,
 		Payload: payload,
-	})
+	}); err != nil {
+		return err
+	}
+	return cc.Writer.Flush()
 }
 
 func (cc *ClientConnection) sendConnectionTune() error {
@@ -177,11 +183,14 @@ func (cc *ClientConnection) sendConnectionTune() error {
 	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 30})
 	payload = append(header, payload...)
 
-	return WriteFrame(cc.Writer, &Frame{
+	if err := WriteFrame(cc.Writer, &Frame{
 		Type:    FrameTypeMethod,
 		Channel: 0,
 		Payload: payload,
-	})
+	}); err != nil {
+		return err
+	}
+	return cc.Writer.Flush()
 }
 
 func serializeConnectionStart() []byte {
