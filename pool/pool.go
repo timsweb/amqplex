@@ -86,3 +86,20 @@ func (p *ConnectionPool) RemoveSafeChannel(upstreamID uint16) {
 	defer p.mu.Unlock()
 	delete(p.SafeChannels, upstreamID)
 }
+
+func (p *ConnectionPool) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, conn := range p.Connections {
+		if conn.Connection != nil {
+			conn.Connection.Close()
+		}
+	}
+	p.Connections = nil
+	if p.SafeChannels != nil {
+		p.SafeChannels = make(map[uint16]bool)
+	}
+
+	return nil
+}

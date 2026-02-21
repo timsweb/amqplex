@@ -130,13 +130,10 @@ func (p *Proxy) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Close all pooled connections
-	for _, connPool := range p.pools {
-		for _, pooled := range connPool.Connections {
-			pooled.Connection.Close()
-		}
+	for _, pool := range p.pools {
+		pool.Close()
 	}
-	p.pools = make(map[[32]byte]*pool.ConnectionPool)
 
+	p.pools = make(map[[32]byte]*pool.ConnectionPool)
 	return nil
 }
