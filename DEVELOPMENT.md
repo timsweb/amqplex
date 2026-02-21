@@ -232,3 +232,16 @@ https://www.rabbitmq.com/amqp-0-9-1-reference.html#connection.start-ok
   - For idle timeout calculations
 - **Action:** Update LastUsed in relevant places as needed
 - **Priority:** TBD - depends on idle timeout implementation requirements
+
+## Code Review Fixes (2025-02-19)
+
+### Critical Issues Fixed
+
+**11. Buffer Not Flushed (connection.go:108, 143, 147)**
+- **Problem:** Methods writing to buffered Writer didn't call Flush()
+- **Impact:** Frames would sit in buffer, AMQP handshake would hang
+- **Fix:** Added cc.Writer.Flush() after WriteFrame in:
+  - sendConnectionStart()
+  - sendConnectionTune()
+  - Handle() after Connection.OpenOK
+- **Context:** bufio.Writer buffers writes; must flush to actually send data
