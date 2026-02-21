@@ -16,7 +16,7 @@ func ParseConnectionStartOk(data []byte) (*Credentials, error) {
 	if err != nil {
 		return nil, err
 	}
-	if header.ClassID != 10 || header.MethodID != 20 {
+	if header.ClassID != 10 || header.MethodID != 11 {
 		return nil, errors.New("not a Connection.StartOk frame")
 	}
 
@@ -89,7 +89,7 @@ func parseTable(data []byte) ([]byte, int, error) {
 }
 
 func serializeConnectionStartOk(mechanism string, response []byte) []byte {
-	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 20})
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 11})
 
 	payload := make([]byte, 0)
 	payload = append(payload, serializeEmptyTable()...)
