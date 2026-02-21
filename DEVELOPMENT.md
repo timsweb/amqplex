@@ -263,3 +263,36 @@ https://www.rabbitmq.com/amqp-0-9-1-reference.html#connection.start-ok
 - **Context:** Task 11 implemented full AMQP flow in ClientConnection.Handle() but proxy.go's handleConnection only parses protocol header and returns dummy credentials
 - **Action:** Integrate ClientConnection.Handle() into proxy.go's handleConnection
 - **Priority:** High - required for actual proxying functionality
+
+### Task 13 - Integration Tests (2025-02-19)
+
+**3. Port Conflict in Multiplexing Test (integration_tls_test.go:93, 67)**
+- **Type:** Testing
+- **Item:** Both TestTLSConnection and TestConnectionMultiplexing use port 15673
+- **Context:** Running all tests together causes "address already in use" errors
+- **Action:** Implement getAvailablePort() or use different fixed ports per test
+- **Priority:** High - tests fail in full test suite
+
+**4. Test Doesn't Verify Multiplexing (integration_tls_test.go:75-127)**
+- **Type:** Testing
+- **Item:** Test only checks that 3 TLS connections can be established
+- **Context:** Named "TestConnectionMultiplexing" but doesn't verify:
+  - Single upstream connection is shared by multiple clients
+  - Channel remapping works
+  - Safe channel behavior
+- **Action:** Add assertions to check pool.Connections count, verify single upstream connection
+- **Priority:** High - test doesn't validate the feature it claims to test
+
+**5. Insufficient Wait Time (integration_tls_test.go:106)**
+- **Type:** Testing
+- **Item:** 100ms sleep may not be enough for AMQP handshake completion
+- **Context:** Test may pass/fail depending on timing and system load
+- **Action:** Increase wait time or implement proper readiness check
+- **Priority:** Medium - causes flaky tests
+
+**6. No AMQP Protocol Interaction (integration_tls_test.go:114-120)**
+- **Type:** Testing
+- **Item:** Test only establishes TLS connection, doesn't send AMQP frames
+- **Context:** Tests TLS listener but not actual AMQP proxy functionality
+- **Action:** Add AMQP protocol header send and handshake frames
+- **Priority:** High - doesn't test the core feature
