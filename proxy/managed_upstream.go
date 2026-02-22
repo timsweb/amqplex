@@ -91,3 +91,83 @@ func (m *ManagedUpstream) Deregister(cw clientWriter) {
 		}
 	}
 }
+
+// Start sets the upstream connection and launches the read loop goroutine.
+// Must be called exactly once after creation.
+func (m *ManagedUpstream) Start(conn *UpstreamConn) {
+	m.mu.Lock()
+	m.conn = conn
+	m.mu.Unlock()
+	go m.readLoop()
+}
+
+func (m *ManagedUpstream) readLoop() {
+	for {
+		m.mu.Lock()
+		conn := m.conn
+		m.mu.Unlock()
+		if conn == nil {
+			return
+		}
+
+		frame, err := ParseFrame(conn.Reader)
+		if err != nil {
+			if !m.stopped.Load() {
+				m.handleUpstreamFailure()
+			}
+			return
+		}
+
+		switch {
+		case frame.Type == FrameTypeHeartbeat:
+			// Echo heartbeat back to upstream; do not forward to clients.
+			m.mu.Lock()
+			c := m.conn
+			m.mu.Unlock()
+			if c != nil {
+				hb := &Frame{Type: FrameTypeHeartbeat, Channel: 0, Payload: []byte{}}
+				_ = WriteFrame(c.Writer, hb)
+				_ = c.Writer.Flush()
+			}
+
+		case frame.Channel == 0:
+			// Connection-level frame (e.g. Connection.Close from upstream).
+			// Forward to all registered clients and abort them.
+			m.mu.Lock()
+			clients := append([]clientWriter(nil), m.clients...)
+			m.mu.Unlock()
+			for _, cw := range clients {
+				_ = cw.DeliverFrame(frame)
+				cw.Abort()
+			}
+
+		default:
+			// Remap channel and dispatch to the owning client.
+			m.mu.Lock()
+			entry, ok := m.channelOwners[frame.Channel]
+			m.mu.Unlock()
+			if !ok {
+				continue
+			}
+			remapped := *frame
+			remapped.Channel = entry.clientChanID
+			_ = entry.owner.DeliverFrame(&remapped)
+		}
+	}
+}
+
+// handleUpstreamFailure tears down all clients and schedules reconnection.
+func (m *ManagedUpstream) handleUpstreamFailure() {
+	m.mu.Lock()
+	clients := append([]clientWriter(nil), m.clients...)
+	m.mu.Unlock()
+
+	for _, cw := range clients {
+		cw.Abort()
+	}
+
+	go m.reconnectLoop()
+}
+
+// reconnectLoop is implemented in Task 4.
+func (m *ManagedUpstream) reconnectLoop() {}
