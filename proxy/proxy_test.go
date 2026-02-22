@@ -47,7 +47,7 @@ func TestGetOrCreateManagedUpstream_ReturnsSameInstance(t *testing.T) {
 		dialFn:        func() (*UpstreamConn, error) { return nil, nil },
 	}
 	p.mu.Lock()
-	p.upstreams[key] = existing
+	p.upstreams[key] = []*ManagedUpstream{existing}
 	p.mu.Unlock()
 
 	// Should return the same instance since it has capacity
@@ -68,7 +68,7 @@ func TestGetOrCreateManagedUpstream_ReturnsSameInstance(t *testing.T) {
 		dialFn:        func() (*UpstreamConn, error) { return nil, nil },
 	}
 	p.mu.Lock()
-	p.upstreams[key2] = existing2
+	p.upstreams[key2] = []*ManagedUpstream{existing2}
 	p.mu.Unlock()
 
 	m2, err := p.getOrCreateManagedUpstream("other", "pass", "/")

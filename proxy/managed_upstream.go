@@ -31,11 +31,12 @@ type ManagedUpstream struct {
 	dialFn        func() (*UpstreamConn, error)
 	reconnectBase time.Duration // base backoff for reconnect; defaults to 500ms
 
-	mu            sync.Mutex
-	conn          *UpstreamConn
-	usedChannels  map[uint16]bool
-	channelOwners map[uint16]channelEntry
-	clients       []clientWriter
+	mu               sync.Mutex
+	conn             *UpstreamConn
+	usedChannels     map[uint16]bool
+	channelOwners    map[uint16]channelEntry
+	clients          []clientWriter
+	upstreamWriterMu sync.Mutex // serialises all writes to conn.Writer
 
 	stopped   atomic.Bool
 	heartbeat uint16 // negotiated heartbeat interval in seconds
@@ -80,6 +81,17 @@ func (m *ManagedUpstream) Register(cw clientWriter) {
 	m.clients = append(m.clients, cw)
 }
 
+// AbortAllClients closes all registered client connections, causing their
+// handleConnection goroutines to exit promptly.
+func (m *ManagedUpstream) AbortAllClients() {
+	m.mu.Lock()
+	clients := append([]clientWriter(nil), m.clients...)
+	m.mu.Unlock()
+	for _, cw := range clients {
+		cw.Abort()
+	}
+}
+
 // Deregister removes a client from the teardown list.
 func (m *ManagedUpstream) Deregister(cw clientWriter) {
 	m.mu.Lock()
@@ -90,6 +102,22 @@ func (m *ManagedUpstream) Deregister(cw clientWriter) {
 			return
 		}
 	}
+}
+
+// writeFrameToUpstream serialises writes to the upstream connection.
+func (m *ManagedUpstream) writeFrameToUpstream(frame *Frame) error {
+	m.upstreamWriterMu.Lock()
+	defer m.upstreamWriterMu.Unlock()
+	m.mu.Lock()
+	conn := m.conn
+	m.mu.Unlock()
+	if conn == nil {
+		return nil
+	}
+	if err := WriteFrame(conn.Writer, frame); err != nil {
+		return err
+	}
+	return conn.Writer.Flush()
 }
 
 // Start sets the upstream connection and launches the read loop goroutine.
@@ -121,14 +149,8 @@ func (m *ManagedUpstream) readLoop() {
 		switch {
 		case frame.Type == FrameTypeHeartbeat:
 			// Echo heartbeat back to upstream; do not forward to clients.
-			m.mu.Lock()
-			c := m.conn
-			m.mu.Unlock()
-			if c != nil {
-				hb := &Frame{Type: FrameTypeHeartbeat, Channel: 0, Payload: []byte{}}
-				_ = WriteFrame(c.Writer, hb)
-				_ = c.Writer.Flush()
-			}
+			hb := &Frame{Type: FrameTypeHeartbeat, Channel: 0, Payload: []byte{}}
+			_ = m.writeFrameToUpstream(hb)
 
 		case frame.Channel == 0:
 			// Connection-level frame (e.g. Connection.Close from upstream).

@@ -18,7 +18,7 @@ import (
 type Proxy struct {
 	listener    *AMQPListener
 	config      *config.Config
-	upstreams   map[[32]byte]*ManagedUpstream
+	upstreams   map[[32]byte][]*ManagedUpstream // slice per credential set
 	netListener net.Listener
 	mu          sync.RWMutex
 	wg          sync.WaitGroup // tracks active handleConnection goroutines
@@ -32,7 +32,7 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 	return &Proxy{
 		listener:  listener,
 		config:    cfg,
-		upstreams: make(map[[32]byte]*ManagedUpstream),
+		upstreams: make(map[[32]byte][]*ManagedUpstream),
 	}, nil
 }
 
@@ -84,21 +84,25 @@ func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*M
 	key := p.getPoolKey(username, password, vhost)
 
 	p.mu.RLock()
-	existing, ok := p.upstreams[key]
-	p.mu.RUnlock()
-	if ok && existing.HasCapacity() {
-		return existing, nil
+	for _, m := range p.upstreams[key] {
+		if m.HasCapacity() {
+			p.mu.RUnlock()
+			return m, nil
+		}
 	}
+	p.mu.RUnlock()
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Re-check under write lock
-	if existing, ok := p.upstreams[key]; ok && existing.HasCapacity() {
-		return existing, nil
+	for _, m := range p.upstreams[key] {
+		if m.HasCapacity() {
+			return m, nil
+		}
 	}
 
-	// Dial new upstream
+	// All existing upstreams full (or none exist): dial a new one
 	network, addr, err := parseUpstreamURL(p.config.UpstreamURL)
 	if err != nil {
 		return nil, err
@@ -133,7 +137,7 @@ func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*M
 	}
 	m.Start(upstreamConn)
 
-	p.upstreams[key] = m
+	p.upstreams[key] = append(p.upstreams[key], m)
 	return m, nil
 }
 
@@ -251,17 +255,7 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		// Mark channel unsafe if needed.
 		markChannelSafety(frame, cc)
 
-		managed.mu.Lock()
-		conn := managed.conn
-		managed.mu.Unlock()
-		if conn == nil {
-			return
-		}
-
-		if err := WriteFrame(conn.Writer, &remapped); err != nil {
-			return
-		}
-		if err := conn.Writer.Flush(); err != nil {
+		if err := managed.writeFrameToUpstream(&remapped); err != nil {
 			return
 		}
 
@@ -292,21 +286,15 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 
 		if ok && !ch.Safe {
 			// Send Channel.Close to upstream for unsafe channels.
-			managed.mu.Lock()
-			conn := managed.conn
-			managed.mu.Unlock()
-			if conn != nil {
-				closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
-				closePayload = append(closePayload, 0, 0)                       // reply-code = 0
-				closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
-				closePayload = append(closePayload, 0, 0, 0, 0)                 // class-id=0, method-id=0
-				_ = WriteFrame(conn.Writer, &Frame{
-					Type:    FrameTypeMethod,
-					Channel: upstreamID,
-					Payload: closePayload,
-				})
-				_ = conn.Writer.Flush()
-			}
+			closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
+			closePayload = append(closePayload, 0, 0)                       // reply-code = 0
+			closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
+			closePayload = append(closePayload, 0, 0, 0, 0)                 // class-id=0, method-id=0
+			_ = managed.writeFrameToUpstream(&Frame{
+				Type:    FrameTypeMethod,
+				Channel: upstreamID,
+				Payload: closePayload,
+			})
 		}
 
 		managed.ReleaseChannel(upstreamID)
@@ -329,15 +317,18 @@ func (p *Proxy) Stop() error {
 		p.netListener.Close()
 		p.netListener = nil
 	}
-	for _, m := range p.upstreams {
-		m.stopped.Store(true)
-		m.mu.Lock()
-		if m.conn != nil {
-			m.conn.Conn.Close()
+	for _, upstreams := range p.upstreams {
+		for _, m := range upstreams {
+			m.stopped.Store(true)
+			m.AbortAllClients() // abort client connections so handleConnection exits
+			m.mu.Lock()
+			if m.conn != nil {
+				m.conn.Conn.Close()
+			}
+			m.mu.Unlock()
 		}
-		m.mu.Unlock()
 	}
-	p.upstreams = make(map[[32]byte]*ManagedUpstream)
+	p.upstreams = make(map[[32]byte][]*ManagedUpstream)
 	p.mu.Unlock()
 
 	// Wait up to 30 seconds for active handleConnection goroutines to exit.

@@ -261,7 +261,7 @@ func isChannelClose(frame *Frame) bool {
 	if frame.Payload[0] != 0 || frame.Payload[1] != 20 {
 		return false
 	}
-	return frame.Payload[3] == 40 || frame.Payload[3] == 41
+	return frame.Payload[2] == 0 && (frame.Payload[3] == 40 || frame.Payload[3] == 41)
 }
 
 // serializeConnectionClose builds a Connection.Close method payload.

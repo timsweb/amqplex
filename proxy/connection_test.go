@@ -100,6 +100,10 @@ func TestIsChannelClose(t *testing.T) {
 	// Channel.CloseOk: class=20, method=41 (0x00,0x29)
 	frame2 := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 20, 0, 41}}
 	assert.True(t, isChannelClose(frame2))
+
+	// Not Channel.Close: same low byte (40) but high method byte non-zero
+	notClose := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 20, 1, 40}}
+	assert.False(t, isChannelClose(notClose))
 }
 
 func TestUnmapChannelCleansClientChannels(t *testing.T) {

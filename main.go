@@ -38,9 +38,18 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
+	// stopDone is closed after Stop() completes its drain.
+	stopDone := make(chan struct{})
+
+	// On signal, call Stop() in a goroutine. Stop() closes the listener (making
+	// p.Start() return) and then drains active connections. We wait on stopDone
+	// after Start() returns so the process does not exit before drain completes.
 	go func() {
 		<-sigCh
-		p.Stop()
+		if err := p.Stop(); err != nil {
+			log.Printf("Stop error: %v", err)
+		}
+		close(stopDone)
 	}()
 
 	// Start health check server
@@ -51,9 +60,15 @@ func main() {
 		log.Fatal(http.ListenAndServe(healthAddr, healthHandler))
 	}()
 
-	// Start AMQP proxy
+	// Start AMQP proxy — blocks until listener is closed (by Stop()).
 	log.Printf("AMQP Proxy listening on %s", fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort))
-	log.Fatal(p.Start())
+	if err := p.Start(); err != nil {
+		log.Fatal(err)
+	}
+
+	// p.Start() returned because the listener was closed. Wait for Stop()'s
+	// drain to complete before the process exits.
+	<-stopDone
 }
 
 func parseFlags(args []string) (string, string, error) {
