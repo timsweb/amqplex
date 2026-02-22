@@ -43,6 +43,7 @@ func NewAMQPListener(cfg *config.Config) (*AMQPListener, error) {
 			tlsConfig = &tls.Config{}
 		}
 		tlsConfig.ClientCAs = caCertPool
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 
 	return &AMQPListener{
