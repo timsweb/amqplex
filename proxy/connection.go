@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-
-	"github.com/timsweb/amqproxy/pool"
 )
 
 type ClientConnection struct {
@@ -16,11 +14,14 @@ type ClientConnection struct {
 	ChannelMapping map[uint16]uint16
 	ReverseMapping map[uint16]uint16 // For O(1) upstream → client lookup
 	Mu             sync.RWMutex
+	writerMu       sync.Mutex
 	Proxy          *Proxy
 	Reader         *bufio.Reader
 	Writer         *bufio.Writer
-	Pool           *pool.ConnectionPool // Reference to the pool this connection belongs to
-	writerMu       sync.Mutex
+	// Credentials extracted during handshake
+	Username string
+	Password string
+	Vhost    string
 }
 
 type ClientChannel struct {
@@ -177,9 +178,10 @@ func (cc *ClientConnection) Handle() error {
 		return fmt.Errorf("failed to parse Connection.Open: %w", err)
 	}
 
-	connPool := pool.NewConnectionPool(creds.Username, creds.Password, vhost, 0, 65535)
 	cc.Mu.Lock()
-	cc.Pool = connPool
+	cc.Username = creds.Username
+	cc.Password = creds.Password
+	cc.Vhost = vhost
 	cc.Mu.Unlock()
 
 	if err := WriteFrame(cc.Writer, &Frame{

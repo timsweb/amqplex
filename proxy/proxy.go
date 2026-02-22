@@ -191,14 +191,14 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 	}
 
 	cc.Mu.RLock()
-	connPool := cc.Pool
+	username, password, vhost := cc.Username, cc.Password, cc.Vhost
 	cc.Mu.RUnlock()
-	if connPool == nil {
+	if username == "" {
 		return
 	}
 
 	// Acquire or create a ManagedUpstream for this credential set.
-	managed, err := p.getOrCreateManagedUpstream(connPool.Username, connPool.Password, connPool.Vhost)
+	managed, err := p.getOrCreateManagedUpstream(username, password, vhost)
 	if err != nil {
 		// Upstream unavailable — send Connection.Close 503 to client.
 		_ = WriteFrame(cc.Writer, &Frame{
