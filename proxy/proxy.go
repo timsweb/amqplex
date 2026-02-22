@@ -208,23 +208,14 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	remoteAddr := clientConn.RemoteAddr().String()
-	p.logger.Info("client connected",
-		slog.String("remote_addr", remoteAddr),
-		slog.String("user", username),
-		slog.String("vhost", vhost),
-	)
-	start := time.Now()
-	defer p.logger.Info("client disconnected",
-		slog.String("remote_addr", remoteAddr),
-		slog.String("user", username),
-		slog.String("vhost", vhost),
-		slog.Int64("duration_ms", time.Since(start).Milliseconds()),
-	)
-
 	// Acquire or create a ManagedUpstream for this credential set.
 	managed, err := p.getOrCreateManagedUpstream(username, password, vhost)
 	if err != nil {
+		// Log rejection BEFORE any "connected" event — client was never truly connected.
+		p.logger.Warn("client rejected — upstream unavailable",
+			slog.String("remote_addr", clientConn.RemoteAddr().String()),
+			slog.String("error", err.Error()),
+		)
 		// Upstream unavailable — send Connection.Close 503 to client.
 		_ = WriteFrame(cc.Writer, &Frame{
 			Type:    FrameTypeMethod,
@@ -232,12 +223,25 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 			Payload: serializeConnectionClose(503, "upstream unavailable"),
 		})
 		_ = cc.Writer.Flush()
-		p.logger.Warn("client rejected — upstream unavailable",
-			slog.String("remote_addr", clientConn.RemoteAddr().String()),
-			slog.String("error", err.Error()),
-		)
 		return
 	}
+
+	// Only log "connected" once we have a valid upstream.
+	remoteAddr := clientConn.RemoteAddr().String()
+	p.logger.Info("client connected",
+		slog.String("remote_addr", remoteAddr),
+		slog.String("user", username),
+		slog.String("vhost", vhost),
+	)
+	start := time.Now()
+	defer func() {
+		p.logger.Info("client disconnected",
+			slog.String("remote_addr", remoteAddr),
+			slog.String("user", username),
+			slog.String("vhost", vhost),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+		)
+	}()
 
 	managed.Register(cc)
 	defer func() {
