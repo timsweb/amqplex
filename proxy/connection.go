@@ -144,13 +144,19 @@ func (cc *ClientConnection) Handle() error {
 		return err
 	}
 
-	if header.ClassID == 10 && header.MethodID == 40 {
-		pool := cc.Proxy.getOrCreatePool(creds.Username, creds.Password, "/")
-
-		cc.Mu.Lock()
-		cc.Pool = pool
-		cc.Mu.Unlock()
+	if header.ClassID != 10 || header.MethodID != 40 {
+		return fmt.Errorf("expected Connection.Open (class=10, method=40), got class=%d method=%d", header.ClassID, header.MethodID)
 	}
+
+	vhost, err := ParseConnectionOpen(frame.Payload)
+	if err != nil {
+		return fmt.Errorf("failed to parse Connection.Open: %w", err)
+	}
+
+	connPool := cc.Proxy.getOrCreatePool(creds.Username, creds.Password, vhost)
+	cc.Mu.Lock()
+	cc.Pool = connPool
+	cc.Mu.Unlock()
 
 	if err := WriteFrame(cc.Writer, &Frame{
 		Type:    FrameTypeMethod,

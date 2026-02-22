@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 )
 
 type Credentials struct {
@@ -123,4 +124,23 @@ func serializeLongString(data []byte) []byte {
 
 func serializeShortString(s string) []byte {
 	return append([]byte{byte(len(s))}, s...)
+}
+
+// ParseConnectionOpen extracts the vhost from a Connection.Open frame payload.
+func ParseConnectionOpen(data []byte) (string, error) {
+	header, err := ParseMethodHeader(data)
+	if err != nil {
+		return "", err
+	}
+	if header.ClassID != 10 || header.MethodID != 40 {
+		return "", fmt.Errorf("expected Connection.Open (class=10, method=40), got class=%d method=%d", header.ClassID, header.MethodID)
+	}
+	if len(data) < 5 {
+		return "", errors.New("Connection.Open payload too short")
+	}
+	vhost, _, err := parseShortString(data[4:])
+	if err != nil {
+		return "", fmt.Errorf("failed to parse vhost: %w", err)
+	}
+	return vhost, nil
 }
