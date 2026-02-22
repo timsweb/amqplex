@@ -176,7 +176,7 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 
 	cc := NewClientConnection(clientConn, p)
 
-	// Step 1: Read the AMQP protocol header from the client.
+	// Read and validate AMQP protocol header.
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(clientConn, header); err != nil {
 		return
@@ -185,13 +185,11 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	// Step 2: Perform the client-side AMQP handshake. This sends Connection.Start,
-	// reads credentials, sends Tune, reads TuneOk, reads Connection.Open (vhost).
+	// Client-side handshake: extracts credentials and vhost.
 	if err := cc.Handle(); err != nil {
 		return
 	}
 
-	// cc.Pool is now set with the correct credentials and vhost.
 	cc.Mu.RLock()
 	connPool := cc.Pool
 	cc.Mu.RUnlock()
@@ -199,78 +197,121 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	// Step 3: Acquire ManagedUpstream for these credentials.
-	_, err := p.getOrCreateManagedUpstream(connPool.Username, connPool.Password, connPool.Vhost)
+	// Acquire or create a ManagedUpstream for this credential set.
+	managed, err := p.getOrCreateManagedUpstream(connPool.Username, connPool.Password, connPool.Vhost)
 	if err != nil {
+		// Upstream unavailable — send Connection.Close 503 to client.
+		_ = WriteFrame(cc.Writer, &Frame{
+			Type:    FrameTypeMethod,
+			Channel: 0,
+			Payload: serializeConnectionClose(503, "upstream unavailable"),
+		})
+		_ = cc.Writer.Flush()
 		return
 	}
 
-	// Step 4: Establish upstream connection (legacy path; full rewrite is Task 6).
-	network, addr, err := parseUpstreamURL(p.config.UpstreamURL)
-	if err != nil {
-		return
-	}
+	managed.Register(cc)
+	defer func() {
+		managed.Deregister(cc)
+		p.releaseClientChannels(managed, cc)
+	}()
 
-	var upstreamNetConn net.Conn
-	if network == "tcp+tls" {
-		tlsCfg, err := p.upstreamTLSConfig()
+	// Client → Upstream proxy loop.
+	// Upstream → Client is handled by ManagedUpstream.readLoop.
+	for {
+		frame, err := ParseFrame(cc.Reader)
 		if err != nil {
 			return
 		}
-		upstreamNetConn, err = tls.Dial("tcp", addr, tlsCfg)
-	} else {
-		upstreamNetConn, err = net.Dial("tcp", addr)
-	}
-	if err != nil {
-		return
-	}
-	defer upstreamNetConn.Close()
 
-	upstreamConn, err := performUpstreamHandshake(upstreamNetConn, connPool.Username, connPool.Password, connPool.Vhost)
-	if err != nil {
-		return
-	}
+		// Consume client heartbeats — proxy owns the upstream heartbeat.
+		if frame.Type == FrameTypeHeartbeat {
+			continue
+		}
 
-	// Step 5: Bidirectional frame proxy.
-	fp := NewFrameProxy(cc, upstreamConn.Writer, cc.Writer)
-	done := make(chan struct{}, 2)
-
-	// Client → Upstream
-	go func() {
-		defer func() { done <- struct{}{} }()
-		for {
-			frame, err := ParseFrame(cc.Reader)
+		if isChannelOpen(frame) {
+			upstreamID, err := managed.AllocateChannel(frame.Channel, cc)
 			if err != nil {
+				// No channel capacity — close this client.
 				return
 			}
-			if err := fp.ProxyClientToUpstream(frame); err != nil {
-				return
-			}
-			if err := upstreamConn.Writer.Flush(); err != nil {
-				return
+			cc.MapChannel(frame.Channel, upstreamID)
+		}
+
+		// Remap client channel ID to upstream channel ID.
+		cc.Mu.RLock()
+		upstreamChanID, mapped := cc.ChannelMapping[frame.Channel]
+		cc.Mu.RUnlock()
+
+		remapped := *frame
+		if mapped {
+			remapped.Channel = upstreamChanID
+		}
+
+		// Mark channel unsafe if needed.
+		markChannelSafety(frame, cc)
+
+		managed.mu.Lock()
+		conn := managed.conn
+		managed.mu.Unlock()
+		if conn == nil {
+			return
+		}
+
+		if err := WriteFrame(conn.Writer, &remapped); err != nil {
+			return
+		}
+		if err := conn.Writer.Flush(); err != nil {
+			return
+		}
+
+		if isChannelClose(frame) {
+			cc.Mu.RLock()
+			upstreamID := cc.ChannelMapping[frame.Channel]
+			cc.Mu.RUnlock()
+			managed.ReleaseChannel(upstreamID)
+			cc.UnmapChannel(frame.Channel)
+		}
+	}
+}
+
+// releaseClientChannels is called when a client disconnects. Safe channels are
+// released for reuse; unsafe channels are closed on the upstream first.
+func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnection) {
+	cc.Mu.RLock()
+	channels := make(map[uint16]uint16, len(cc.ChannelMapping))
+	for clientID, upstreamID := range cc.ChannelMapping {
+		channels[clientID] = upstreamID
+	}
+	cc.Mu.RUnlock()
+
+	for clientID, upstreamID := range channels {
+		cc.Mu.RLock()
+		ch, ok := cc.ClientChannels[clientID]
+		cc.Mu.RUnlock()
+
+		if ok && !ch.Safe {
+			// Send Channel.Close to upstream for unsafe channels.
+			managed.mu.Lock()
+			conn := managed.conn
+			managed.mu.Unlock()
+			if conn != nil {
+				closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
+				closePayload = append(closePayload, 0, 0)                       // reply-code = 0
+				closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
+				closePayload = append(closePayload, 0, 0, 0, 0)                 // class-id=0, method-id=0
+				_ = WriteFrame(conn.Writer, &Frame{
+					Type:    FrameTypeMethod,
+					Channel: upstreamID,
+					Payload: closePayload,
+				})
+				_ = conn.Writer.Flush()
 			}
 		}
-	}()
 
-	// Upstream → Client
-	go func() {
-		defer func() { done <- struct{}{} }()
-		for {
-			frame, err := ParseFrame(upstreamConn.Reader)
-			if err != nil {
-				return
-			}
-			if err := fp.ProxyUpstreamToClient(frame); err != nil {
-				return
-			}
-			if err := cc.Writer.Flush(); err != nil {
-				return
-			}
-		}
-	}()
-
-	// Wait for either direction to finish, then close both connections.
-	<-done
+		managed.ReleaseChannel(upstreamID)
+		cc.UnmapChannel(clientID)
+	}
 }
 
 func (p *Proxy) upstreamTLSConfig() (*tls.Config, error) {

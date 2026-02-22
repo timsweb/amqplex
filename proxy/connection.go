@@ -241,3 +241,59 @@ func serializeConnectionOpenOK() []byte {
 	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 41})
 	return append(header, 0)
 }
+
+// isChannelOpen returns true for Channel.Open frames (class=20, method=10).
+func isChannelOpen(frame *Frame) bool {
+	if frame.Type != FrameTypeMethod || len(frame.Payload) < 4 {
+		return false
+	}
+	return frame.Payload[0] == 0 && frame.Payload[1] == 20 &&
+		frame.Payload[2] == 0 && frame.Payload[3] == 10
+}
+
+// isChannelClose returns true for Channel.Close (40) and Channel.CloseOk (41).
+func isChannelClose(frame *Frame) bool {
+	if frame.Type != FrameTypeMethod || len(frame.Payload) < 4 {
+		return false
+	}
+	if frame.Payload[0] != 0 || frame.Payload[1] != 20 {
+		return false
+	}
+	return frame.Payload[3] == 40 || frame.Payload[3] == 41
+}
+
+// serializeConnectionClose builds a Connection.Close method payload.
+func serializeConnectionClose(replyCode uint16, replyText string) []byte {
+	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 50})
+	body := make([]byte, 2)
+	binary.BigEndian.PutUint16(body, replyCode)
+	body = append(body, serializeShortString(replyText)...)
+	body = append(body, 0, 0, 0, 0) // class-id=0, method-id=0
+	return append(header, body...)
+}
+
+var unsafeMethods = map[[4]byte]bool{
+	{0, 60, 0, 20}:  true, // Basic.Consume
+	{0, 60, 0, 10}:  true, // Basic.Qos
+	{0, 60, 0, 80}:  true, // Basic.Ack
+	{0, 60, 0, 90}:  true, // Basic.Reject
+	{0, 60, 0, 120}: true, // Basic.Nack
+}
+
+// markChannelSafety marks a channel unsafe if the frame is an unsafe method.
+func markChannelSafety(frame *Frame, cc *ClientConnection) {
+	if frame.Type != FrameTypeMethod || len(frame.Payload) < 4 {
+		return
+	}
+	key := [4]byte{frame.Payload[0], frame.Payload[1], frame.Payload[2], frame.Payload[3]}
+	if unsafeMethods[key] {
+		cc.Mu.RLock()
+		ch, ok := cc.ClientChannels[frame.Channel]
+		cc.Mu.RUnlock()
+		if ok {
+			ch.Mu.Lock()
+			ch.Safe = false
+			ch.Mu.Unlock()
+		}
+	}
+}

@@ -82,6 +82,26 @@ func TestClientConnectionDeliverFrame(t *testing.T) {
 	assert.Equal(t, uint16(5), channelInFrame)
 }
 
+func TestIsChannelOpen(t *testing.T) {
+	// Channel.Open: class=20 (0x00,0x14), method=10 (0x00,0x0A)
+	frame := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 20, 0, 10}}
+	assert.True(t, isChannelOpen(frame))
+
+	// Not Channel.Open (Channel.OpenOk = method 11)
+	other := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 20, 0, 11}}
+	assert.False(t, isChannelOpen(other))
+}
+
+func TestIsChannelClose(t *testing.T) {
+	// Channel.Close: class=20, method=40 (0x00,0x28)
+	frame := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 20, 0, 40}}
+	assert.True(t, isChannelClose(frame))
+
+	// Channel.CloseOk: class=20, method=41 (0x00,0x29)
+	frame2 := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 20, 0, 41}}
+	assert.True(t, isChannelClose(frame2))
+}
+
 func TestUnmapChannelCleansClientChannels(t *testing.T) {
 	cc := NewClientConnection(nil, nil)
 	cc.MapChannel(1, 100)
