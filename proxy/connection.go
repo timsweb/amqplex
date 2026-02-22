@@ -195,7 +195,15 @@ func (cc *ClientConnection) sendConnectionTune() error {
 
 func serializeConnectionStart() []byte {
 	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 10})
-	return append(header, 0, 0, 0, 0)
+
+	payload := make([]byte, 0, 32)
+	payload = append(payload, 0)                                       // version-major = 0
+	payload = append(payload, 9)                                       // version-minor = 9
+	payload = append(payload, serializeEmptyTable()...)                // server-properties (empty table)
+	payload = append(payload, serializeLongString([]byte("PLAIN"))...) // mechanisms
+	payload = append(payload, serializeLongString([]byte("en_US"))...) // locales
+
+	return append(header, payload...)
 }
 
 func serializeConnectionOpenOK() []byte {
