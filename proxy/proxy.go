@@ -57,6 +57,10 @@ func (p *Proxy) Start() error {
 	p.netListener = listener
 	p.mu.Unlock()
 
+	p.logger.Info("proxy started",
+		slog.String("addr", fmt.Sprintf("%s:%d", p.config.ListenAddress, p.config.ListenPort)),
+	)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -204,6 +208,20 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		return
 	}
 
+	remoteAddr := clientConn.RemoteAddr().String()
+	p.logger.Info("client connected",
+		slog.String("remote_addr", remoteAddr),
+		slog.String("user", username),
+		slog.String("vhost", vhost),
+	)
+	start := time.Now()
+	defer p.logger.Info("client disconnected",
+		slog.String("remote_addr", remoteAddr),
+		slog.String("user", username),
+		slog.String("vhost", vhost),
+		slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+	)
+
 	// Acquire or create a ManagedUpstream for this credential set.
 	managed, err := p.getOrCreateManagedUpstream(username, password, vhost)
 	if err != nil {
@@ -214,6 +232,10 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 			Payload: serializeConnectionClose(503, "upstream unavailable"),
 		})
 		_ = cc.Writer.Flush()
+		p.logger.Warn("client rejected — upstream unavailable",
+			slog.String("remote_addr", clientConn.RemoteAddr().String()),
+			slog.String("error", err.Error()),
+		)
 		return
 	}
 
@@ -344,5 +366,6 @@ func (p *Proxy) Stop() error {
 	case <-done:
 	case <-time.After(30 * time.Second):
 	}
+	p.logger.Info("proxy stopped")
 	return nil
 }
