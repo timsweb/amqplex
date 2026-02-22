@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -98,8 +99,8 @@ func GenerateClientCert(caCert *x509.Certificate, caKey *rsa.PrivateKey) *tls.Ce
 	return &tls.Certificate{Certificate: [][]byte{certDER}, PrivateKey: priv}
 }
 
-func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls.Certificate, clientCert *tls.Certificate) error {
-	if err := os.MkdirAll("test_certs", 0755); err != nil {
+func WriteCerts(dir string, caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls.Certificate, clientCert *tls.Certificate) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -108,12 +109,13 @@ func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls
 	if err != nil {
 		return err
 	}
-	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: caKeyBytes})
+	// PKCS#8 DER must use "PRIVATE KEY" PEM type, not "RSA PRIVATE KEY"
+	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: caKeyBytes})
 
-	if err := os.WriteFile("test_certs/ca.crt", caPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), caPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile("test_certs/ca.key", caKeyPEM, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ca.key"), caKeyPEM, 0600); err != nil {
 		return err
 	}
 
@@ -122,12 +124,12 @@ func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls
 	if err != nil {
 		return err
 	}
-	serverCertKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: serverCertKeyBytes})
+	serverCertKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: serverCertKeyBytes})
 
-	if err := os.WriteFile("test_certs/server.crt", serverCertPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "server.crt"), serverCertPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile("test_certs/server.key", serverCertKeyPEM, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "server.key"), serverCertKeyPEM, 0600); err != nil {
 		return err
 	}
 
@@ -136,14 +138,10 @@ func WriteCerts(caCert *x509.Certificate, caKey *rsa.PrivateKey, serverCert *tls
 	if err != nil {
 		return err
 	}
-	clientCertKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: clientCertKeyBytes})
+	clientCertKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: clientCertKeyBytes})
 
-	if err := os.WriteFile("test_certs/client.crt", clientCertPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "client.crt"), clientCertPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile("test_certs/client.key", clientCertKeyPEM, 0600); err != nil {
-		return err
-	}
-
-	return nil
+	return os.WriteFile(filepath.Join(dir, "client.key"), clientCertKeyPEM, 0600)
 }
