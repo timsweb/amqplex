@@ -177,7 +177,7 @@ func (cc *ClientConnection) Handle() error {
 		return fmt.Errorf("failed to parse Connection.Open: %w", err)
 	}
 
-	connPool := cc.Proxy.getOrCreatePool(creds.Username, creds.Password, vhost)
+	connPool := pool.NewConnectionPool(creds.Username, creds.Password, vhost, 0, 65535)
 	cc.Mu.Lock()
 	cc.Pool = connPool
 	cc.Mu.Unlock()

@@ -9,18 +9,19 @@ import (
 	"net"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/pool"
 	"github.com/timsweb/amqproxy/tlsutil"
 )
 
 type Proxy struct {
 	listener    *AMQPListener
 	config      *config.Config
-	pools       map[[32]byte]*pool.ConnectionPool // key: hash of credentials
+	upstreams   map[[32]byte]*ManagedUpstream
 	netListener net.Listener
 	mu          sync.RWMutex
+	wg          sync.WaitGroup // tracks active handleConnection goroutines
 }
 
 func NewProxy(cfg *config.Config) (*Proxy, error) {
@@ -28,11 +29,10 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listener: %w", err)
 	}
-
 	return &Proxy{
-		listener: listener,
-		config:   cfg,
-		pools:    make(map[[32]byte]*pool.ConnectionPool),
+		listener:  listener,
+		config:    cfg,
+		upstreams: make(map[[32]byte]*ManagedUpstream),
 	}, nil
 }
 
@@ -63,7 +63,11 @@ func (p *Proxy) Start() error {
 			// Transient error: continue accepting
 			continue
 		}
-		go p.handleConnection(conn)
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.handleConnection(conn)
+		}()
 	}
 }
 
@@ -76,27 +80,72 @@ func (p *Proxy) getPoolKey(username, password, vhost string) [32]byte {
 	return sha256.Sum256([]byte(credentials))
 }
 
-func (p *Proxy) getOrCreatePool(username, password, vhost string) *pool.ConnectionPool {
+func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*ManagedUpstream, error) {
 	key := p.getPoolKey(username, password, vhost)
 
 	p.mu.RLock()
-	existing, exists := p.pools[key]
+	existing, ok := p.upstreams[key]
 	p.mu.RUnlock()
-
-	if exists {
-		return existing
+	if ok && existing.HasCapacity() {
+		return existing, nil
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if existing, exists := p.pools[key]; exists {
-		return existing
+	// Re-check under write lock
+	if existing, ok := p.upstreams[key]; ok && existing.HasCapacity() {
+		return existing, nil
 	}
 
-	newPool := pool.NewConnectionPool(username, password, vhost, p.config.PoolIdleTimeout, p.config.PoolMaxChannels)
-	p.pools[key] = newPool
-	return newPool
+	// Dial new upstream
+	network, addr, err := parseUpstreamURL(p.config.UpstreamURL)
+	if err != nil {
+		return nil, err
+	}
+
+	netConn, err := p.dialUpstream(network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial upstream: %w", err)
+	}
+
+	upstreamConn, err := performUpstreamHandshake(netConn, username, password, vhost)
+	if err != nil {
+		netConn.Close()
+		return nil, fmt.Errorf("upstream handshake failed: %w", err)
+	}
+
+	m := &ManagedUpstream{
+		username:      username,
+		password:      password,
+		vhost:         vhost,
+		maxChannels:   uint16(p.config.PoolMaxChannels),
+		usedChannels:  make(map[uint16]bool),
+		channelOwners: make(map[uint16]channelEntry),
+		clients:       make([]clientWriter, 0),
+	}
+	m.dialFn = func() (*UpstreamConn, error) {
+		nc, err := p.dialUpstream(network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return performUpstreamHandshake(nc, username, password, vhost)
+	}
+	m.Start(upstreamConn)
+
+	p.upstreams[key] = m
+	return m, nil
+}
+
+func (p *Proxy) dialUpstream(network, addr string) (net.Conn, error) {
+	if network == "tcp+tls" {
+		tlsCfg, err := p.upstreamTLSConfig()
+		if err != nil {
+			return nil, err
+		}
+		return tls.Dial("tcp", addr, tlsCfg)
+	}
+	return net.Dial("tcp", addr)
 }
 
 func parseUpstreamURL(rawURL string) (network, addr string, err error) {
@@ -150,7 +199,13 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	// Step 3: Establish upstream connection.
+	// Step 3: Acquire ManagedUpstream for these credentials.
+	_, err := p.getOrCreateManagedUpstream(connPool.Username, connPool.Password, connPool.Vhost)
+	if err != nil {
+		return
+	}
+
+	// Step 4: Establish upstream connection (legacy path; full rewrite is Task 6).
 	network, addr, err := parseUpstreamURL(p.config.UpstreamURL)
 	if err != nil {
 		return
@@ -176,7 +231,7 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	// Step 4: Bidirectional frame proxy.
+	// Step 5: Bidirectional frame proxy.
 	fp := NewFrameProxy(cc, upstreamConn.Writer, cc.Writer)
 	done := make(chan struct{}, 2)
 
@@ -229,16 +284,30 @@ func (p *Proxy) upstreamTLSConfig() (*tls.Config, error) {
 
 func (p *Proxy) Stop() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.netListener != nil {
 		p.netListener.Close()
 		p.netListener = nil
 	}
-
-	for _, pool := range p.pools {
-		pool.Close()
+	for _, m := range p.upstreams {
+		m.stopped.Store(true)
+		m.mu.Lock()
+		if m.conn != nil {
+			m.conn.Conn.Close()
+		}
+		m.mu.Unlock()
 	}
-	p.pools = make(map[[32]byte]*pool.ConnectionPool)
+	p.upstreams = make(map[[32]byte]*ManagedUpstream)
+	p.mu.Unlock()
+
+	// Wait up to 30 seconds for active handleConnection goroutines to exit.
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+	}
 	return nil
 }
