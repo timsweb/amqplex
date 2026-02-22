@@ -91,6 +91,10 @@ func (cc *ClientConnection) RecordChannelOperation(channelID uint16, operation s
 
 // DeliverFrame writes a frame to the client connection. Thread-safe; may be
 // called concurrently by ManagedUpstream's read loop.
+//
+// Safety: Handle() completes the client-side AMQP handshake and writes
+// Connection.OpenOK before handleConnection calls ManagedUpstream.Register,
+// so Handle() is never concurrent with DeliverFrame calls.
 func (cc *ClientConnection) DeliverFrame(frame *Frame) error {
 	cc.writerMu.Lock()
 	defer cc.writerMu.Unlock()
