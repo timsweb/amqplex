@@ -1,49 +1,24 @@
 # Production Readiness Roadmap
 
-> Status: Core AMQP proxy functionality implemented, but several production-critical gaps remain.
+> Status: True connection multiplexing implemented (2026-02-22). Core production gaps narrowed to observability and circuit breakers.
 
 ## Critical Gaps (P0) - Must Fix Before Production
 
-### 1. Connection Pool Reuse
-**Current State:** Pool exists but provides no value
-- `GetConnection()` always returns `pool.Connections[0]`
-- No load balancing across multiple connections
-- No health checking of pooled connections
-- No eviction of idle/dead connections
-
-**Required Changes:**
-- [ ] Implement connection selection strategy (round-robin, least-connections, etc.)
-- [ ] Add connection health checking (periodic ping/pong)
-- [ ] Implement idle timeout eviction
-- [ ] Add connection reuse logic in `handleConnection`
-- [ ] Tests for connection reuse under load
-
-**Impact:** HIGH - Pool provides no value, always using first connection
-
-**Estimated Effort:** 4-6 hours
+### 1. Connection Pool Reuse ✅ DONE (2026-02-22)
+**Implemented:** True channel multiplexing via `ManagedUpstream`
+- Multiple clients share one upstream AMQP connection with channel ID remapping
+- Packing strategy: fill one upstream to `PoolMaxChannels` before opening another (slice-per-credential-set)
+- Safe channels released for reuse on client disconnect; unsafe channels explicitly closed on upstream
+- `AllocateChannel` / `ReleaseChannel` with lowest-free-ID scan
 
 ---
 
-### 2. Upstream Reconnection
-**Current State:** None - connection fail = client disconnect
-```go
-// handleConnection returns immediately on any upstream error
-if err != nil {
-    return  // Client disconnected!
-}
-```
-
-**Required Changes:**
-- [ ] Implement automatic reconnection with exponential backoff
-- [ ] Track upstream connection state
-- [ ] Buffer client messages during reconnect
-- [ ] Send connection errors back to client if reconnect fails
-- [ ] Tests: Upstream blip + reconnect scenarios
-- [ ] Tests: Permanent upstream failure handling
-
-**Impact:** CRITICAL - Any upstream blip drops all connected clients
-
-**Estimated Effort:** 6-8 hours
+### 2. Upstream Reconnection ✅ DONE (2026-02-22)
+**Implemented:** `ManagedUpstream.reconnectLoop` with exponential backoff
+- Backoff: 500ms → 1s → 2s → … → 30s cap
+- On upstream failure: all registered clients aborted, reconnect loop starts
+- Reconnect is transparent — proxy stays up; clients see a disconnect and should retry
+- `dialFn` injectable for testability
 
 ---
 
@@ -76,21 +51,13 @@ if err != nil {
 
 ## Important Gaps (P1)
 
-### 4. Graceful Shutdown Drain
-**Current State:** Partial
-- `Stop()` closes listener and pools
-- No drain period
-- In-flight operations may fail abruptly
-
-**Required Changes:**
-- [ ] Implement drain period (wait for connections to complete)
-- [ ] Add max wait time (force shutdown after N seconds)
-- [ ] Log number of active connections during shutdown
-- [ ] Tests: Verify in-flight operations complete during drain
-
-**Impact:** MEDIUM - Clients may see abrupt connection close
-
-**Estimated Effort:** 2-3 hours
+### 4. Graceful Shutdown Drain ✅ DONE (2026-02-22)
+**Implemented:** `Stop()` with 30s `sync.WaitGroup` drain
+- Closes listener (no new connections accepted)
+- Aborts all registered client connections (unblocks in-flight reads)
+- Closes all upstream connections
+- Waits up to 30s for all `handleConnection` goroutines to exit
+- SIGTERM/SIGINT handled in `main.go` with proper drain synchronisation
 
 ---
 
@@ -112,61 +79,93 @@ if err != nil {
 
 ### 6. Resource Limits
 **Current State:** Partial
-- `PoolMaxChannels` exists but not enforced
-- No max concurrent connections
+- `PoolMaxChannels` enforced per upstream connection via `ManagedUpstream`
+- No max concurrent clients or upstream connections
 - No memory/CPU limits
 
 **Required Changes:**
-- [ ] Enforce `MaxChannels` per connection
-- [ ] Add max concurrent connections per user/vhost
-- [ ] Add global connection limit
+- [ ] Add max concurrent clients per credential set (reject with 503 when exceeded)
+- [ ] Add global client connection limit
 - [ ] Implement backpressure on connection limit exceeded
 - [ ] Tests: Verify limits enforced under load
 
-**Impact:** HIGH - Resource exhaustion possible
+**Impact:** HIGH - Unbounded upstream connections possible under client flood
 
-**Estimated Effort:** 3-4 hours
+**Estimated Effort:** 2-3 hours
+
+---
+
+### 7. Idle Upstream Cleanup (NEW — surfaced 2026-02-22)
+**Current State:** None
+- `ManagedUpstream` instances are never removed from the slice once created
+- When all clients disconnect, the upstream connection stays open indefinitely
+- Over time (especially with reconnects), stale empty upstreams accumulate
+
+**Required Changes:**
+- [ ] Track last-used time on `ManagedUpstream`
+- [ ] Background goroutine (or on-demand check in `getOrCreateManagedUpstream`) removes empty upstreams idle > N seconds
+- [ ] Remove from `Proxy.upstreams` slice when empty
+- [ ] Tests: Verify idle upstreams are cleaned up
+
+**Impact:** MEDIUM - RabbitMQ connection leak over time
+
+**Estimated Effort:** 2-3 hours
+
+---
+
+### 8. Dead Pool Package Removal (NEW — surfaced 2026-02-22)
+**Current State:** `pool/` package is entirely dead code
+- `pool.ConnectionPool`, `pool.PooledConnection`, `pool.Channel` are unreferenced outside their own package
+- Zero imports from the rest of the codebase
+
+**Required Changes:**
+- [ ] Delete `pool/` directory entirely
+- [ ] Update `go.mod` / `go.sum` if any indirect deps were pool-specific
+
+**Impact:** LOW - Just maintenance debt, no runtime impact
+
+**Estimated Effort:** 30 minutes
 
 ---
 
 ## Nice-to-Have (P2)
 
-### 7. Security & Access Control
+### 9. Security & Access Control
 - [ ] Proxy authentication (optional - require credentials)
 - [ ] Authorization policies (who can access which vhost)
 - [ ] Rate limiting per credential
 - [ ] IP whitelisting/blacklisting
 - [ ] Audit logging (who connected when, for how long)
 
-### 8. Configuration Management
+### 10. Configuration Management
 - [ ] Hot reload (SIGHUP or `/reload` endpoint)
 - [ ] Configuration validation on load
 - [ ] Connection timeout settings
 - [ ] Documentation for all config options
 
-### 9. Advanced Error Handling
+### 11. Advanced Error Handling
 - [ ] Structured error codes
 - [ ] Error categorization
 - [ ] Log levels (debug, info, warn, error)
 - [ ] Sensitive data redaction in logs
 
-### 10. Performance Optimizations
+### 12. Performance Optimizations
 - [ ] Channel pooling (pre-open channels for common operations)
 - [ ] Message batching
 - [ ] Zero-copy frame forwarding where possible
 
-### 11. Operational Features
+### 13. Operational Features
 - [ ] Debug endpoints: `/debug/pprof`, `/debug/connections`
 - [ ] Connection statistics: `/stats` endpoint
 - [ ] Admin API: list connections, disconnect clients
 
-### 12. Protocol Features
-- [ ] Heartbeat handling (currently ignored)
+### 14. Protocol Features
+- [x] Heartbeat handling — proxy echoes upstream heartbeats; client heartbeats consumed/discarded (2026-02-22)
 - [ ] Flow control (basic.qos-sync)
 - [ ] Publisher confirms (basic.ack)
 - [ ] Consumer acknowledgments (basic.ack, basic.reject)
 
-### 13. Documentation
+### 15. Documentation
 - [ ] Deployment guide
 - [ ] Operational runbooks
 - [ ] Performance tuning guide
@@ -181,12 +180,15 @@ if err != nil {
 - [x] Upstream AMQP handshake (connect to RabbitMQ)
 - [x] Bidirectional frame proxying with channel remapping
 - [x] mTLS support (server and client)
-- [x] Connection pooling structure
-- [x] Graceful shutdown (Stop() method)
+- [x] True connection multiplexing — multiple clients share one upstream connection (2026-02-22)
+- [x] Channel ID remapping with packing strategy (2026-02-22)
+- [x] Safe/unsafe channel classification and cleanup on disconnect (2026-02-22)
+- [x] Upstream reconnection with exponential backoff (2026-02-22)
+- [x] Heartbeat proxying — echo upstream, discard client (2026-02-22)
+- [x] Graceful shutdown drain — 30s WaitGroup + SIGTERM/SIGINT (2026-02-22)
 - [x] Channel mapping and cleanup
 - [x] Concurrent connection handling (tests)
 - [x] Channel lifecycle management (tests)
-- [x] Connection pool lifecycle (tests)
 
 ---
 
@@ -244,7 +246,7 @@ handshake_duration_seconds{vhost}
 - [x] Channel mapping/remapping
 - [x] Connection pooling basic
 - [ ] Connection reuse logic
-- [ ] Reconnection logic
+- [x] Reconnection logic (2026-02-22)
 - [ ] Circuit breaker states
 - [ ] Resource limit enforcement
 - [ ] Error categorization
@@ -253,7 +255,7 @@ handshake_duration_seconds{vhost}
 - [x] Basic proxy flow (client → upstream → client)
 - [x] Concurrent connections
 - [x] TLS connections
-- [ ] Upstream reconnection scenarios
+- [x] Upstream reconnection scenarios (unit tested; integration test against real RabbitMQ TODO)
 - [ ] Circuit breaker tripping
 - [ ] Load testing with real RabbitMQ
 - [ ] End-to-end message flow (publish/confirm/consume)
