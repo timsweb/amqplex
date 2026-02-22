@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/binary"
-	"github.com/stretchr/testify/assert"
 	"net"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewClientConnection(t *testing.T) {
@@ -61,6 +64,22 @@ func TestSendConnectionTunePayload(t *testing.T) {
 
 	// heartbeat = 60 as uint16
 	assert.Equal(t, uint16(60), binary.BigEndian.Uint16(data[10:12]))
+}
+
+func TestClientConnectionDeliverFrame(t *testing.T) {
+	buf := &bytes.Buffer{}
+	cc := NewClientConnection(nil, nil)
+	cc.Writer = bufio.NewWriter(buf)
+
+	frame := &Frame{Type: FrameTypeMethod, Channel: 5, Payload: []byte{0, 20, 0, 11}}
+	err := cc.DeliverFrame(frame)
+	assert.NoError(t, err)
+	assert.Greater(t, buf.Len(), 0)
+
+	// Verify channel 5 is in the written frame bytes
+	written := buf.Bytes()
+	channelInFrame := binary.BigEndian.Uint16(written[1:3])
+	assert.Equal(t, uint16(5), channelInFrame)
 }
 
 func TestUnmapChannelCleansClientChannels(t *testing.T) {

@@ -20,6 +20,7 @@ type ClientConnection struct {
 	Reader         *bufio.Reader
 	Writer         *bufio.Writer
 	Pool           *pool.ConnectionPool // Reference to the pool this connection belongs to
+	writerMu       sync.Mutex
 }
 
 type ClientChannel struct {
@@ -85,6 +86,25 @@ func (cc *ClientConnection) RecordChannelOperation(channelID uint16, operation s
 	channel.Operations[operation] = true
 	if !isSafe {
 		channel.Safe = false
+	}
+}
+
+// DeliverFrame writes a frame to the client connection. Thread-safe; may be
+// called concurrently by ManagedUpstream's read loop.
+func (cc *ClientConnection) DeliverFrame(frame *Frame) error {
+	cc.writerMu.Lock()
+	defer cc.writerMu.Unlock()
+	if err := WriteFrame(cc.Writer, frame); err != nil {
+		return err
+	}
+	return cc.Writer.Flush()
+}
+
+// Abort forcibly closes the underlying network connection, causing any
+// in-progress reads or writes to return immediately with an error.
+func (cc *ClientConnection) Abort() {
+	if cc.Conn != nil {
+		cc.Conn.Close()
 	}
 }
 
