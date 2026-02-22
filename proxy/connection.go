@@ -174,19 +174,20 @@ func (cc *ClientConnection) sendConnectionStart() error {
 	return cc.Writer.Flush()
 }
 
-func (cc *ClientConnection) sendConnectionTune() error {
-	payload := make([]byte, 9)
-	binary.BigEndian.PutUint16(payload[0:2], 0)
-	binary.BigEndian.PutUint32(payload[2:6], 0)
-	payload[6] = 60
-
+func serializeConnectionTunePayload() []byte {
 	header := SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 30})
-	payload = append(header, payload...)
+	body := make([]byte, 8)                       // channel-max(2) + frame-max(4) + heartbeat(2)
+	binary.BigEndian.PutUint16(body[0:2], 0)      // channel-max = 0 (no limit)
+	binary.BigEndian.PutUint32(body[2:6], 131072) // frame-max = 128KB
+	binary.BigEndian.PutUint16(body[6:8], 60)     // heartbeat = 60s
+	return append(header, body...)
+}
 
+func (cc *ClientConnection) sendConnectionTune() error {
 	if err := WriteFrame(cc.Writer, &Frame{
 		Type:    FrameTypeMethod,
 		Channel: 0,
-		Payload: payload,
+		Payload: serializeConnectionTunePayload(),
 	}); err != nil {
 		return err
 	}
