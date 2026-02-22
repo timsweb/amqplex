@@ -23,11 +23,22 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 
 // stubClient implements clientWriter for tests.
 type stubClient struct {
-	frames []*Frame
+	frames    []*Frame
+	delivered chan struct{} // signalled when DeliverFrame is called
+}
+
+func newStubClient() *stubClient {
+	return &stubClient{delivered: make(chan struct{}, 10)}
 }
 
 func (s *stubClient) DeliverFrame(f *Frame) error {
 	s.frames = append(s.frames, f)
+	if s.delivered != nil {
+		select {
+		case s.delivered <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 func (s *stubClient) Abort() {}
@@ -154,7 +165,7 @@ func TestReadLoop_HeartbeatEchoed(t *testing.T) {
 
 func TestReadLoop_FrameDispatchedToClient(t *testing.T) {
 	m, server := startedUpstream(t)
-	stub := &stubClient{}
+	stub := newStubClient()
 
 	// Register client as owner of upstream channel 5
 	m.mu.Lock()
@@ -171,7 +182,11 @@ func TestReadLoop_FrameDispatchedToClient(t *testing.T) {
 	assert.NoError(t, w.Flush())
 
 	// Client should receive the frame remapped to client channel 1
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-stub.delivered:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for frame delivery")
+	}
 	assert.Len(t, stub.frames, 1)
 	assert.Equal(t, uint16(1), stub.frames[0].Channel)
 }
@@ -186,6 +201,12 @@ func TestReadLoop_HeartbeatNotSentToClients(t *testing.T) {
 	assert.NoError(t, WriteFrame(w, hb))
 	assert.NoError(t, w.Flush())
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the echo to arrive on the server side — proves the read loop
+	// processed the heartbeat before we assert the stub received nothing.
+	r := bufio.NewReader(server)
+	server.SetReadDeadline(time.Now().Add(time.Second))
+	echo, err := ParseFrame(r)
+	assert.NoError(t, err)
+	assert.Equal(t, FrameTypeHeartbeat, echo.Type)
 	assert.Empty(t, stub.frames, "heartbeat must not be forwarded to clients")
 }
