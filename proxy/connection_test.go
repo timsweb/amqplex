@@ -62,3 +62,30 @@ func TestSendConnectionTunePayload(t *testing.T) {
 	// heartbeat = 60 as uint16
 	assert.Equal(t, uint16(60), binary.BigEndian.Uint16(data[10:12]))
 }
+
+func TestUnmapChannelCleansClientChannels(t *testing.T) {
+	cc := NewClientConnection(nil, nil)
+	cc.MapChannel(1, 100)
+
+	// Verify channel exists
+	cc.Mu.RLock()
+	_, exists := cc.ClientChannels[1]
+	cc.Mu.RUnlock()
+	assert.True(t, exists)
+
+	cc.UnmapChannel(1)
+
+	// After unmap, ClientChannels must also be cleaned
+	cc.Mu.RLock()
+	_, exists = cc.ClientChannels[1]
+	cc.Mu.RUnlock()
+	assert.False(t, exists)
+
+	// ChannelMapping and ReverseMapping must also be gone
+	cc.Mu.RLock()
+	_, inMapping := cc.ChannelMapping[1]
+	_, inReverse := cc.ReverseMapping[100]
+	cc.Mu.RUnlock()
+	assert.False(t, inMapping)
+	assert.False(t, inReverse)
+}

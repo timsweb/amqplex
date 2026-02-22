@@ -67,7 +67,8 @@ func (cc *ClientConnection) UnmapChannel(clientID uint16) {
 	upstreamID, ok := cc.ChannelMapping[clientID]
 	if ok {
 		delete(cc.ChannelMapping, clientID)
-		delete(cc.ReverseMapping, upstreamID) // Remove from reverse map too
+		delete(cc.ReverseMapping, upstreamID)
+		delete(cc.ClientChannels, clientID)
 	}
 }
 
