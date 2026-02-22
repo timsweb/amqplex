@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/timsweb/amqproxy/config"
 	"github.com/timsweb/amqproxy/health"
@@ -32,6 +34,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error creating proxy: %v", err)
 	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		<-sigCh
+		p.Stop()
+	}()
 
 	// Start health check server
 	go func() {
