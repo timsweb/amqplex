@@ -11,10 +11,6 @@ import (
 	"github.com/timsweb/amqproxy/pool"
 )
 
-const (
-	AMQPProtocolHeader = "AMQP\x00\x00\x09\x01"
-)
-
 type AMQPHandshake struct {
 	Protocol string
 	Username string
@@ -117,7 +113,7 @@ func (p *Proxy) parseAMQPHandshake(conn net.Conn) (string, string, string, error
 		return "", "", "", err
 	}
 
-	if string(header) != AMQPProtocolHeader {
+	if string(header) != ProtocolHeader {
 		return "", "", "", fmt.Errorf("invalid AMQP protocol header")
 	}
 
