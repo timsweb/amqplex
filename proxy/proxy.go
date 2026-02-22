@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/timsweb/amqproxy/config"
@@ -15,10 +16,11 @@ import (
 )
 
 type Proxy struct {
-	listener *AMQPListener
-	config   *config.Config
-	pools    map[[32]byte]*pool.ConnectionPool // key: hash of credentials
-	mu       sync.RWMutex
+	listener    *AMQPListener
+	config      *config.Config
+	pools       map[[32]byte]*pool.ConnectionPool // key: hash of credentials
+	netListener net.Listener
+	mu          sync.RWMutex
 }
 
 func NewProxy(cfg *config.Config) (*Proxy, error) {
@@ -47,15 +49,33 @@ func (p *Proxy) Start() error {
 	if err != nil {
 		return fmt.Errorf("failed to start listener: %w", err)
 	}
-	defer listener.Close()
+
+	p.mu.Lock()
+	p.netListener = listener
+	p.mu.Unlock()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			// Check if we're shutting down
+			select {
+			default:
+			}
+			// net.ErrClosed is returned when the listener is closed by Stop()
+			if isClosedError(err) {
+				return nil
+			}
+			// Transient error: log and continue
 			continue
 		}
 		go p.handleConnection(conn)
 	}
+}
+
+func isClosedError(err error) bool {
+	// net package doesn't export a typed error for this
+	return err != nil && (err.Error() == "use of closed network connection" ||
+		strings.Contains(err.Error(), "use of closed network connection"))
 }
 
 func (p *Proxy) getPoolKey(username, password, vhost string) [32]byte {
@@ -215,10 +235,14 @@ func (p *Proxy) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.netListener != nil {
+		p.netListener.Close()
+		p.netListener = nil
+	}
+
 	for _, pool := range p.pools {
 		pool.Close()
 	}
-
 	p.pools = make(map[[32]byte]*pool.ConnectionPool)
 	return nil
 }
