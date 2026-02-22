@@ -169,5 +169,38 @@ func (m *ManagedUpstream) handleUpstreamFailure() {
 	go m.reconnectLoop()
 }
 
-// reconnectLoop is implemented in Task 4.
-func (m *ManagedUpstream) reconnectLoop() {}
+// reconnectLoop attempts to re-establish the upstream connection with
+// exponential backoff. It relaunches readLoop once a connection succeeds.
+func (m *ManagedUpstream) reconnectLoop() {
+	base := m.reconnectBase
+	if base == 0 {
+		base = 500 * time.Millisecond
+	}
+	wait := base
+	const maxWait = 30 * time.Second
+
+	for !m.stopped.Load() {
+		time.Sleep(wait)
+
+		conn, err := m.dialFn()
+		if err != nil {
+			if wait*2 > maxWait {
+				wait = maxWait
+			} else {
+				wait = wait * 2
+			}
+			continue
+		}
+
+		m.mu.Lock()
+		m.conn = conn
+		// Reset channel state — all clients were torn down on failure
+		m.usedChannels = make(map[uint16]bool)
+		m.channelOwners = make(map[uint16]channelEntry)
+		m.clients = make([]clientWriter, 0)
+		m.mu.Unlock()
+
+		go m.readLoop()
+		return
+	}
+}

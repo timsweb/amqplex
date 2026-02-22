@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
 		clients:       make([]clientWriter, 0),
+		dialFn:        func() (*UpstreamConn, error) { return nil, errors.New("no dial fn") },
 	}
 }
 
@@ -140,7 +142,46 @@ func startedUpstream(t *testing.T) (*ManagedUpstream, net.Conn) {
 	}
 	m := newTestManagedUpstream(65535)
 	m.Start(uc)
+	t.Cleanup(func() { m.stopped.Store(true) })
 	return m, serverConn
+}
+
+func TestReconnectLoop_RestartsReadLoop(t *testing.T) {
+	proxyConn, serverConn := upstreamPipe(t)
+	uc := &UpstreamConn{
+		Conn:   proxyConn,
+		Reader: bufio.NewReader(proxyConn),
+		Writer: bufio.NewWriter(proxyConn),
+	}
+
+	proxyConn2, _ := upstreamPipe(t)
+
+	dialCount := 0
+	reconnected := make(chan struct{}, 1)
+
+	m := newTestManagedUpstream(65535)
+	m.dialFn = func() (*UpstreamConn, error) {
+		dialCount++
+		reconnected <- struct{}{}
+		return &UpstreamConn{
+			Conn:   proxyConn2,
+			Reader: bufio.NewReader(proxyConn2),
+			Writer: bufio.NewWriter(proxyConn2),
+		}, nil
+	}
+	m.reconnectBase = 10 * time.Millisecond // fast reconnect for tests
+	m.Start(uc)
+
+	// Kill the upstream connection to trigger reconnect
+	serverConn.Close()
+
+	// Wait for reconnect
+	select {
+	case <-reconnected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout: reconnect did not happen")
+	}
+	assert.Equal(t, 1, dialCount, "should have dialled once to reconnect")
 }
 
 func TestReadLoop_HeartbeatEchoed(t *testing.T) {
