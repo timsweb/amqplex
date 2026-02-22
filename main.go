@@ -82,6 +82,8 @@ func buildLogger() *slog.Logger {
 		level = slog.LevelDebug
 	case "warn":
 		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
 	default:
 		level = slog.LevelInfo
 	}

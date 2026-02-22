@@ -23,6 +23,9 @@ func (lc *logCapture) Handle(_ context.Context, r slog.Record) error {
 	return nil
 }
 
+// WithAttrs and WithGroup return lc unchanged. Pre-applied attributes from
+// child loggers (e.g. logger.With("key", val)) will NOT appear in attrValue
+// queries — only attributes passed directly to log calls are captured.
 func (lc *logCapture) WithAttrs([]slog.Attr) slog.Handler { return lc }
 func (lc *logCapture) WithGroup(string) slog.Handler      { return lc }
 

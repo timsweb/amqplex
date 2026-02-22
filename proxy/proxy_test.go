@@ -1,8 +1,6 @@
 package proxy
 
 import (
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,8 +16,7 @@ func TestNewProxy(t *testing.T) {
 		PoolIdleTimeout: 5,
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	proxy, err := NewProxy(cfg, logger)
+	proxy, err := NewProxy(cfg, discardLogger())
 	assert.NoError(t, err)
 	assert.NotNil(t, proxy)
 	assert.NotNil(t, proxy.listener)
