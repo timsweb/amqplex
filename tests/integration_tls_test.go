@@ -39,7 +39,7 @@ func TestTLSConnection(t *testing.T) {
 		// No TLSCACert — not requiring client certs for this test
 	}
 
-	p, err := proxy.NewProxy(cfg)
+	p, err := proxy.NewProxy(cfg, discardLogger())
 	require.NoError(t, err)
 
 	go p.Start()
@@ -105,7 +105,7 @@ func TestConnectionMultiplexing(t *testing.T) {
 		TLSKey:          filepath.Join(certDir, "server.key"),
 	}
 
-	p, _ := proxy.NewProxy(cfg)
+	p, _ := proxy.NewProxy(cfg, discardLogger())
 	go p.Start()
 	defer p.Stop()
 

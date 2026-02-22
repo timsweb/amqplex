@@ -4,9 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/timsweb/amqproxy/config"
@@ -30,7 +32,8 @@ func main() {
 		cfg.UpstreamURL = upstreamURL
 	}
 
-	p, err := proxy.NewProxy(cfg)
+	logger := buildLogger()
+	p, err := proxy.NewProxy(cfg, logger)
 	if err != nil {
 		log.Fatalf("Error creating proxy: %v", err)
 	}
@@ -69,6 +72,28 @@ func main() {
 	// p.Start() returned because the listener was closed. Wait for Stop()'s
 	// drain to complete before the process exits.
 	<-stopDone
+}
+
+func buildLogger() *slog.Logger {
+	levelStr := strings.ToLower(os.Getenv("LOG_LEVEL"))
+	var level slog.Level
+	switch levelStr {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if strings.ToLower(os.Getenv("LOG_FORMAT")) == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+	return slog.New(handler)
 }
 
 func parseFlags(args []string) (string, string, error) {

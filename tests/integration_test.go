@@ -23,7 +23,7 @@ func TestProxyIntegration(t *testing.T) {
 		PoolIdleTimeout: 5,
 	}
 
-	p, err := proxy.NewProxy(cfg)
+	p, err := proxy.NewProxy(cfg, discardLogger())
 	require.NoError(t, err)
 
 	go p.Start()

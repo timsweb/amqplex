@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/url"
 	"sync"
@@ -22,9 +23,10 @@ type Proxy struct {
 	netListener net.Listener
 	mu          sync.RWMutex
 	wg          sync.WaitGroup // tracks active handleConnection goroutines
+	logger      *slog.Logger
 }
 
-func NewProxy(cfg *config.Config) (*Proxy, error) {
+func NewProxy(cfg *config.Config, logger *slog.Logger) (*Proxy, error) {
 	listener, err := NewAMQPListener(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listener: %w", err)
@@ -33,6 +35,7 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 		listener:  listener,
 		config:    cfg,
 		upstreams: make(map[[32]byte][]*ManagedUpstream),
+		logger:    logger,
 	}, nil
 }
 

@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +18,8 @@ func TestNewProxy(t *testing.T) {
 		PoolIdleTimeout: 5,
 	}
 
-	proxy, err := NewProxy(cfg)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	proxy, err := NewProxy(cfg, logger)
 	assert.NoError(t, err)
 	assert.NotNil(t, proxy)
 	assert.NotNil(t, proxy.listener)
@@ -30,7 +33,7 @@ func TestGetOrCreateManagedUpstream_ReturnsSameInstance(t *testing.T) {
 		PoolIdleTimeout: 5,
 		PoolMaxChannels: 65535,
 	}
-	p, err := NewProxy(cfg)
+	p, err := NewProxy(cfg, discardLogger())
 	require.NoError(t, err)
 
 	// Without a real upstream, we can only test that the map key logic works.
