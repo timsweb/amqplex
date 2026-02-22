@@ -110,3 +110,22 @@ func TestProxyClientToUpstreamChannelZero(t *testing.T) {
 	err := fp.ProxyClientToUpstream(frame)
 	assert.NoError(t, err)
 }
+
+func TestProxyUpstreamToClientChannelZeroPassthrough(t *testing.T) {
+	clientConn := NewClientConnection(nil, nil)
+	// No channel mappings — simulates a fresh connection
+
+	clientBuf := &bytes.Buffer{}
+	fp := NewFrameProxy(clientConn, nil, clientBuf)
+
+	// Channel-0 frames (heartbeats, Connection.Close, Connection.Blocked) must
+	// always be forwarded to the client even though channel 0 is never in ReverseMapping.
+	frame := &Frame{Type: FrameTypeMethod, Channel: 0, Payload: []byte{0, 10, 0, 10}}
+	err := fp.ProxyUpstreamToClient(frame)
+	assert.NoError(t, err)
+
+	written := clientBuf.Bytes()
+	assert.Greater(t, len(written), 0, "channel-0 frame must be forwarded to client")
+	channelInFrame := binary.BigEndian.Uint16(written[1:3])
+	assert.Equal(t, uint16(0), channelInFrame)
+}

@@ -3,11 +3,11 @@ package proxy
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
-	"strings"
 	"sync"
 
 	"github.com/timsweb/amqproxy/config"
@@ -57,15 +57,10 @@ func (p *Proxy) Start() error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			// Check if we're shutting down
-			select {
-			default:
-			}
-			// net.ErrClosed is returned when the listener is closed by Stop()
 			if isClosedError(err) {
 				return nil
 			}
-			// Transient error: log and continue
+			// Transient error: continue accepting
 			continue
 		}
 		go p.handleConnection(conn)
@@ -73,9 +68,7 @@ func (p *Proxy) Start() error {
 }
 
 func isClosedError(err error) bool {
-	// net package doesn't export a typed error for this
-	return err != nil && (err.Error() == "use of closed network connection" ||
-		strings.Contains(err.Error(), "use of closed network connection"))
+	return errors.Is(err, net.ErrClosed)
 }
 
 func (p *Proxy) getPoolKey(username, password, vhost string) [32]byte {
@@ -165,7 +158,11 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 
 	var upstreamNetConn net.Conn
 	if network == "tcp+tls" {
-		upstreamNetConn, err = tls.Dial("tcp", addr, p.upstreamTLSConfig())
+		tlsCfg, err := p.upstreamTLSConfig()
+		if err != nil {
+			return
+		}
+		upstreamNetConn, err = tls.Dial("tcp", addr, tlsCfg)
 	} else {
 		upstreamNetConn, err = net.Dial("tcp", addr)
 	}
@@ -221,14 +218,13 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 	<-done
 }
 
-func (p *Proxy) upstreamTLSConfig() *tls.Config {
-	cfg, _ := tlsutil.LoadTLSConfig(
+func (p *Proxy) upstreamTLSConfig() (*tls.Config, error) {
+	return tlsutil.LoadTLSConfig(
 		p.config.TLSCACert,
 		p.config.TLSClientCert,
 		p.config.TLSClientKey,
 		p.config.TLSSkipVerify,
 	)
-	return cfg
 }
 
 func (p *Proxy) Stop() error {

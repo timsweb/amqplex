@@ -52,16 +52,16 @@ func TestFrameProxyNilWriter(t *testing.T) {
 	cc := NewClientConnection(nil, nil)
 	cc.MapChannel(1, 100)
 
-	// FrameProxy with nil upstream writer - should not panic
+	// FrameProxy with nil writers must not panic — nil is treated as a no-op.
 	fp := NewFrameProxy(cc, nil, nil)
 
-	frame := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{1, 2, 3}}
+	clientFrame := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{1, 2, 3}}
+	err := fp.ProxyClientToUpstream(clientFrame)
+	assert.NoError(t, err)
 
-	// This will panic when trying to write to nil writer
-	// The test verifies we handle this scenario in real usage
-	assert.Panics(t, func() {
-		fp.ProxyClientToUpstream(frame)
-	})
+	upstreamFrame := &Frame{Type: FrameTypeMethod, Channel: 100, Payload: []byte{1, 2, 3}}
+	err = fp.ProxyUpstreamToClient(upstreamFrame)
+	assert.NoError(t, err)
 }
 
 func TestFrameProxyChannelRemappingUnderLoad(t *testing.T) {

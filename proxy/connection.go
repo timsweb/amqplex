@@ -12,7 +12,6 @@ import (
 
 type ClientConnection struct {
 	Conn           net.Conn
-	UpstreamConn   interface{} // Will be *amqp.Connection when established
 	ClientChannels map[uint16]*ClientChannel
 	ChannelMapping map[uint16]uint16
 	ReverseMapping map[uint16]uint16 // For O(1) upstream → client lookup

@@ -36,6 +36,7 @@ func TestConcurrentConnections(t *testing.T) {
 	// Connect 10 concurrent clients
 	numClients := 10
 	var conns []net.Conn
+	var connsMu sync.Mutex
 	var wg sync.WaitGroup
 
 	for i := 0; i < numClients; i++ {
@@ -52,7 +53,9 @@ func TestConcurrentConnections(t *testing.T) {
 				time.Sleep(time.Duration(j+1) * 10 * time.Millisecond)
 			}
 			if err == nil && conn != nil {
+				connsMu.Lock()
 				conns = append(conns, conn)
+				connsMu.Unlock()
 			}
 		}(i)
 	}

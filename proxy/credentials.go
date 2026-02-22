@@ -43,7 +43,7 @@ func ParseConnectionStartOk(data []byte) (*Credentials, error) {
 		return nil, err
 	}
 
-	// Parse PLAIN format: \0auth-id\0username\0password
+	// Parse PLAIN format: \0username\0password
 	parts := bytes.Split(response, []byte{0})
 	if len(parts) != 3 {
 		return nil, errors.New("invalid PLAIN auth format")
