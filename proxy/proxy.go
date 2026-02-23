@@ -429,7 +429,11 @@ func (p *Proxy) removeIdleUpstreams(timeout time.Duration) {
 // It exits when done is closed.
 func (p *Proxy) startIdleCleanup(done <-chan struct{}) {
 	timeout := time.Duration(p.config.PoolIdleTimeout) * time.Second
-	ticker := time.NewTicker(30 * time.Second)
+	interval := p.config.PoolCleanupInterval
+	if interval <= 0 {
+		interval = 30
+	}
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 	for {
 		select {

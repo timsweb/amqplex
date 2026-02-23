@@ -14,6 +14,7 @@ type Config struct {
 	PoolMaxChannels        int
 	MaxUpstreamConnections int // 0 = unlimited
 	MaxClientConnections   int // 0 = unlimited
+	PoolCleanupInterval    int // 0 = use default 30s
 	UpstreamURL            string
 	// Server TLS configuration (for accepting connections)
 	TLSCert string
@@ -35,6 +36,7 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 	v.SetDefault("pool.max_channels", 65535)
 	v.SetDefault("pool.max_upstream_connections", 0)
 	v.SetDefault("pool.max_client_connections", 0)
+	v.SetDefault("pool.cleanup_interval", 30)
 
 	// Set env prefix
 	if envPrefix != "" {
@@ -60,6 +62,7 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 		PoolMaxChannels:        v.GetInt("pool.max_channels"),
 		MaxUpstreamConnections: v.GetInt("pool.max_upstream_connections"),
 		MaxClientConnections:   v.GetInt("pool.max_client_connections"),
+		PoolCleanupInterval:    v.GetInt("pool.cleanup_interval"),
 		UpstreamURL:            v.GetString("upstream.url"),
 		// Server TLS fields
 		TLSCert: v.GetString("tls.cert"),
