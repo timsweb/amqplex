@@ -37,6 +37,7 @@ type ManagedUpstream struct {
 	usedChannels     map[uint16]bool
 	channelOwners    map[uint16]channelEntry
 	clients          []clientWriter
+	lastEmptyTime    time.Time // protected by mu; zero when clients > 0
 	upstreamWriterMu sync.Mutex // serialises all writes to conn.Writer
 
 	stopped   atomic.Bool
@@ -104,6 +105,7 @@ func (m *ManagedUpstream) Register(cw clientWriter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clients = append(m.clients, cw)
+	m.lastEmptyTime = time.Time{} // upstream is active
 }
 
 // AbortAllClients closes all registered client connections, causing their
@@ -124,8 +126,11 @@ func (m *ManagedUpstream) Deregister(cw clientWriter) {
 	for i, c := range m.clients {
 		if c == cw {
 			m.clients = append(m.clients[:i], m.clients[i+1:]...)
-			return
+			break
 		}
+	}
+	if len(m.clients) == 0 {
+		m.lastEmptyTime = time.Now()
 	}
 }
 
@@ -236,6 +241,29 @@ func (m *ManagedUpstream) handleUpstreamFailure(cause error) {
 	go m.reconnectLoop()
 }
 
+// markStoppedIfIdle checks whether the upstream has been empty for at least
+// timeout and, if so, atomically marks it stopped and closes the connection.
+// Returns true if the upstream was stopped by this call.
+func (m *ManagedUpstream) markStoppedIfIdle(timeout time.Duration) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastEmptyTime.IsZero() {
+		return false
+	}
+	if len(m.clients) > 0 || len(m.usedChannels) > 0 {
+		return false
+	}
+	if time.Since(m.lastEmptyTime) < timeout {
+		return false
+	}
+	m.stopped.Store(true)
+	if m.conn != nil {
+		m.conn.Conn.Close()
+		m.conn = nil
+	}
+	return true
+}
+
 // reconnectLoop attempts to re-establish the upstream connection with
 // exponential backoff. It relaunches readLoop once a connection succeeds.
 func (m *ManagedUpstream) reconnectLoop() {
@@ -276,6 +304,7 @@ func (m *ManagedUpstream) reconnectLoop() {
 		m.usedChannels = make(map[uint16]bool)
 		m.channelOwners = make(map[uint16]channelEntry)
 		m.clients = make([]clientWriter, 0)
+		m.lastEmptyTime = time.Now() // no clients yet after reconnect
 		m.mu.Unlock()
 
 		go m.readLoop()

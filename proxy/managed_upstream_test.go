@@ -313,6 +313,47 @@ func TestAllocateReleaseChannelLogged(t *testing.T) {
 	assert.Contains(t, lc.messages(), "channel released")
 }
 
+func TestMarkStoppedIfIdle_NotIdleWhenClientsPresent(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	m.lastEmptyTime = time.Time{} // zero = has clients
+	assert.False(t, m.markStoppedIfIdle(0))
+	assert.False(t, m.stopped.Load())
+}
+
+func TestMarkStoppedIfIdle_NotIdleBeforeTimeout(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	m.lastEmptyTime = time.Now() // just became empty
+	assert.False(t, m.markStoppedIfIdle(time.Hour))
+	assert.False(t, m.stopped.Load())
+}
+
+func TestMarkStoppedIfIdle_StopsWhenTimedOut(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	m.lastEmptyTime = time.Now().Add(-2 * time.Second)
+	assert.True(t, m.markStoppedIfIdle(time.Second))
+	assert.True(t, m.stopped.Load())
+}
+
+func TestDeregisterSetsLastEmptyTime(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	client := newStubClient()
+	m.Register(client)
+	assert.True(t, m.lastEmptyTime.IsZero())
+
+	before := time.Now()
+	m.Deregister(client)
+	assert.False(t, m.lastEmptyTime.IsZero())
+	assert.True(t, m.lastEmptyTime.After(before) || m.lastEmptyTime.Equal(before))
+}
+
+func TestRegisterResetsLastEmptyTime(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	m.lastEmptyTime = time.Now().Add(-time.Hour)
+	client := newStubClient()
+	m.Register(client)
+	assert.True(t, m.lastEmptyTime.IsZero())
+}
+
 func TestManagedUpstreamLogsReconnect(t *testing.T) {
 	lc, logger := newCapture()
 
