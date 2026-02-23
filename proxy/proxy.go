@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/timsweb/amqplex/config"
@@ -17,13 +18,14 @@ import (
 )
 
 type Proxy struct {
-	listener    *AMQPListener
-	config      *config.Config
-	upstreams   map[[32]byte][]*ManagedUpstream // slice per credential set
-	netListener net.Listener
-	mu          sync.RWMutex
-	wg          sync.WaitGroup // tracks active handleConnection goroutines
-	logger      *slog.Logger
+	listener      *AMQPListener
+	config        *config.Config
+	upstreams     map[[32]byte][]*ManagedUpstream // slice per credential set
+	netListener   net.Listener
+	mu            sync.RWMutex
+	wg            sync.WaitGroup // tracks active handleConnection goroutines
+	activeClients atomic.Int32
+	logger        *slog.Logger
 }
 
 func NewProxy(cfg *config.Config, logger *slog.Logger) (*Proxy, error) {
@@ -90,7 +92,14 @@ func (p *Proxy) Start() error {
 			conn.Close()
 			return nil
 		}
+		if p.config.MaxClientConnections > 0 &&
+			int(p.activeClients.Load()) >= p.config.MaxClientConnections {
+			p.mu.RUnlock()
+			conn.Close()
+			continue
+		}
 		p.wg.Add(1)
+		p.activeClients.Add(1)
 		p.mu.RUnlock()
 		go func() {
 			defer p.wg.Done()
@@ -207,6 +216,7 @@ func parseUpstreamURL(rawURL string) (network, addr string, err error) {
 
 func (p *Proxy) handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
+	defer p.activeClients.Add(-1)
 
 	cc := NewClientConnection(clientConn, p)
 

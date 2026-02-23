@@ -165,6 +165,99 @@ func TestActiveUpstreamNotRemoved(t *testing.T) {
 	assert.False(t, m.stopped.Load())
 }
 
+func TestClientLimitRejectsOverLimit(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:        "localhost",
+		ListenPort:           15710,
+		UpstreamURL:          "amqp://localhost:5672",
+		MaxClientConnections: 1,
+		PoolMaxChannels:      65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	go p.Start()
+	defer p.Stop()
+	time.Sleep(10 * time.Millisecond)
+
+	// Simulate one active client already occupying the single slot.
+	p.activeClients.Add(1)
+	defer p.activeClients.Add(-1)
+
+	conn, err := net.Dial("tcp", "localhost:15710")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Proxy should close the connection immediately — any read returns EOF or error.
+	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 1)
+	_, err = conn.Read(buf)
+	assert.Error(t, err, "over-limit connection should be closed immediately")
+}
+
+func TestClientLimitAllowsUnderLimit(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:        "localhost",
+		ListenPort:           15711,
+		UpstreamURL:          "amqp://localhost:5672",
+		MaxClientConnections: 2,
+		PoolMaxChannels:      65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	go p.Start()
+	defer p.Stop()
+	time.Sleep(10 * time.Millisecond)
+
+	// One active client — still one slot free.
+	p.activeClients.Add(1)
+	defer p.activeClients.Add(-1)
+
+	conn, err := net.Dial("tcp", "localhost:15711")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Proxy should accept the connection and begin the AMQP handshake.
+	_, err = conn.Write([]byte(ProtocolHeader))
+	require.NoError(t, err)
+	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 1)
+	n, _ := conn.Read(buf)
+	assert.Greater(t, n, 0, "proxy should respond when under limit")
+}
+
+func TestClientLimitZeroMeansUnlimited(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:        "localhost",
+		ListenPort:           15712,
+		UpstreamURL:          "amqp://localhost:5672",
+		MaxClientConnections: 0, // unlimited
+		PoolMaxChannels:      65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	go p.Start()
+	defer p.Stop()
+	time.Sleep(10 * time.Millisecond)
+
+	// Crank the counter to a large value — with limit=0 it must be ignored.
+	p.activeClients.Add(1000)
+	defer p.activeClients.Add(-1000)
+
+	conn, err := net.Dial("tcp", "localhost:15712")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	_, err = conn.Write([]byte(ProtocolHeader))
+	require.NoError(t, err)
+	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 1)
+	n, _ := conn.Read(buf)
+	assert.Greater(t, n, 0, "proxy should respond when limit is 0")
+}
+
 func TestClientRejectedWhenUpstreamUnavailable(t *testing.T) {
 	lc, logger := newCapture()
 	cfg := &config.Config{
