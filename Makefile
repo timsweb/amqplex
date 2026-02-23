@@ -1,4 +1,4 @@
-.PHONY: build test clean run docker-up docker-down
+.PHONY: build test clean run docker-up docker-down integration
 
 build:
 	go build -o bin/amqproxy ./main.go
@@ -11,6 +11,10 @@ test-short:
 
 integration-test:
 	go test -v ./tests/...
+
+integration:
+	docker compose up -d
+	go test -tags integration -v -timeout 120s ./tests/ ; docker compose down
 
 clean:
 	rm -rf bin/ test_certs/
