@@ -383,7 +383,7 @@ func (p *Proxy) removeIdleUpstreams(timeout time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for key, upstreams := range p.upstreams {
-		kept := upstreams[:0]
+		kept := make([]*ManagedUpstream, 0, len(upstreams))
 		for _, m := range upstreams {
 			if m.markStoppedIfIdle(timeout) {
 				p.logger.Info("upstream idle timeout",

@@ -123,13 +123,15 @@ func (m *ManagedUpstream) AbortAllClients() {
 func (m *ManagedUpstream) Deregister(cw clientWriter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	found := false
 	for i, c := range m.clients {
 		if c == cw {
 			m.clients = append(m.clients[:i], m.clients[i+1:]...)
+			found = true
 			break
 		}
 	}
-	if len(m.clients) == 0 {
+	if found && len(m.clients) == 0 {
 		m.lastEmptyTime = time.Now()
 	}
 }

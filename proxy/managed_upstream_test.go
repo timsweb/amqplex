@@ -346,6 +346,16 @@ func TestDeregisterSetsLastEmptyTime(t *testing.T) {
 	assert.True(t, m.lastEmptyTime.After(before) || m.lastEmptyTime.Equal(before))
 }
 
+func TestDeregisterUnknownClientDoesNotSetLastEmptyTime(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	realClient := newStubClient()
+	m.Register(realClient)
+	// Deregister a client that was never registered
+	m.Deregister(newStubClient())
+	// lastEmptyTime must remain zero — realClient is still registered
+	assert.True(t, m.lastEmptyTime.IsZero(), "lastEmptyTime must not be set for an unregistered client")
+}
+
 func TestRegisterResetsLastEmptyTime(t *testing.T) {
 	m := newTestManagedUpstream(10)
 	m.lastEmptyTime = time.Now().Add(-time.Hour)
