@@ -175,7 +175,16 @@ func TestClientReconnect(t *testing.T) {
 
 	// First connection: publish one message then disconnect.
 	{
-		conn := dialProxy(t, 15683)
+		var conn *amqp.Connection
+		var err error
+		for i := 0; i < 5; i++ {
+			conn, err = amqp.Dial(fmt.Sprintf("amqp://guest:guest@localhost:%d/", 15683))
+			if err == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		require.NoError(t, err)
 		ch, err := conn.Channel()
 		require.NoError(t, err)
 		_, err = ch.QueueDeclare(queueName, true, false, false, false, nil) // durable
@@ -225,7 +234,16 @@ func TestIdleUpstreamCleanup(t *testing.T) {
 
 	// First connection: declare a durable queue, publish, then disconnect.
 	{
-		conn := dialProxy(t, 15684)
+		var conn *amqp.Connection
+		var err error
+		for i := 0; i < 5; i++ {
+			conn, err = amqp.Dial(fmt.Sprintf("amqp://guest:guest@localhost:%d/", 15684))
+			if err == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		require.NoError(t, err)
 		ch, err := conn.Channel()
 		require.NoError(t, err)
 		_, err = ch.QueueDeclare(queueName, true, false, false, false, nil)
