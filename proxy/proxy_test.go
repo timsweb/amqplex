@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -332,4 +333,77 @@ func TestClientRejectedWhenUpstreamUnavailable(t *testing.T) {
 	// the client-side handshake and failing to dial the (non-existent) upstream.
 	assert.True(t, lc.waitForMessage("client rejected — upstream unavailable", 2*time.Second),
 		"expected 'client rejected — upstream unavailable' log, got: %v", lc.messages())
+}
+
+func TestUpstreamLimitRejectsNewDial(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:          "localhost",
+		ListenPort:             15713,
+		UpstreamURL:            "amqp://localhost:5672",
+		MaxUpstreamConnections: 1,
+		PoolMaxChannels:        65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	// Pre-populate one upstream — exactly at the limit.
+	key := p.getPoolKey("user", "pass", "/")
+	m := newTestManagedUpstream(65535)
+	p.mu.Lock()
+	p.upstreams[key] = []*ManagedUpstream{m}
+	p.mu.Unlock()
+
+	// Requesting a different credential set should fail with the limit error,
+	// not a dial error.
+	_, err = p.getOrCreateManagedUpstream("other", "pass", "/other")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "upstream connection limit reached")
+}
+
+func TestUpstreamLimitAllowsUnderLimit(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:          "localhost",
+		ListenPort:             15714,
+		UpstreamURL:            "amqp://localhost:19999", // nothing listening
+		MaxUpstreamConnections: 2,
+		PoolMaxChannels:        65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	// One upstream in the map — still one slot free.
+	key := p.getPoolKey("user", "pass", "/")
+	m := newTestManagedUpstream(65535)
+	p.mu.Lock()
+	p.upstreams[key] = []*ManagedUpstream{m}
+	p.mu.Unlock()
+
+	_, err = p.getOrCreateManagedUpstream("other", "pass", "/other")
+	// Must fail with a dial error (nothing listening), NOT a limit error.
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "connection limit reached")
+}
+
+func TestUpstreamLimitZeroMeansUnlimited(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:          "localhost",
+		ListenPort:             15715,
+		UpstreamURL:            "amqp://localhost:19999",
+		MaxUpstreamConnections: 0, // unlimited
+		PoolMaxChannels:        65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	// Pre-populate many upstreams — with limit=0 none of this should matter.
+	p.mu.Lock()
+	for i := 0; i < 100; i++ {
+		key := p.getPoolKey(fmt.Sprintf("user%d", i), "pass", "/")
+		p.upstreams[key] = []*ManagedUpstream{newTestManagedUpstream(65535)}
+	}
+	p.mu.Unlock()
+
+	_, err = p.getOrCreateManagedUpstream("newuser", "pass", "/")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "connection limit reached")
 }

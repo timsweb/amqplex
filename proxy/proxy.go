@@ -139,7 +139,17 @@ func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*M
 		}
 	}
 
-	// All existing upstreams full (or none exist): dial a new one
+	// All existing upstreams full (or none exist): check global cap before dialling.
+	if p.config.MaxUpstreamConnections > 0 {
+		total := 0
+		for _, slice := range p.upstreams {
+			total += len(slice)
+		}
+		if total >= p.config.MaxUpstreamConnections {
+			return nil, errors.New("upstream connection limit reached")
+		}
+	}
+
 	network, addr, err := parseUpstreamURL(p.config.UpstreamURL)
 	if err != nil {
 		return nil, err
@@ -216,7 +226,7 @@ func parseUpstreamURL(rawURL string) (network, addr string, err error) {
 
 func (p *Proxy) handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
-	defer p.activeClients.Add(-1)
+	defer p.activeClients.Add(-1) // pairs with activeClients.Add(1) in Start()
 
 	cc := NewClientConnection(clientConn, p)
 
