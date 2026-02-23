@@ -353,6 +353,8 @@ func TestUpstreamLimitRejectsNewDial(t *testing.T) {
 	p.upstreams[key] = []*ManagedUpstream{m}
 	p.mu.Unlock()
 
+	// Use a different credential set so the re-check under write lock finds no
+	// matching upstream and falls through to the limit check.
 	// Requesting a different credential set should fail with the limit error,
 	// not a dial error.
 	_, err = p.getOrCreateManagedUpstream("other", "pass", "/other")

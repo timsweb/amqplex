@@ -140,6 +140,8 @@ func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*M
 	}
 
 	// All existing upstreams full (or none exist): check global cap before dialling.
+	// Upstreams that are mid-reconnect (stopped=false, no clients) still count —
+	// they hold their slot and will return to service once reconnected.
 	if p.config.MaxUpstreamConnections > 0 {
 		total := 0
 		for _, slice := range p.upstreams {
