@@ -106,6 +106,65 @@ func TestProxyLogsStartAndStop(t *testing.T) {
 	assert.Contains(t, lc.messages(), "proxy stopped")
 }
 
+func TestIdleUpstreamRemovedAfterTimeout(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:   "localhost",
+		ListenPort:      15695,
+		UpstreamURL:     "amqp://localhost:5672",
+		PoolIdleTimeout: 1, // 1 second for test speed
+		PoolMaxChannels: 65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	// Pre-populate an upstream that has been idle > timeout
+	key := p.getPoolKey("user", "pass", "/")
+	m := newTestManagedUpstream(65535)
+	m.lastEmptyTime = time.Now().Add(-2 * time.Second)
+	p.mu.Lock()
+	p.upstreams[key] = []*ManagedUpstream{m}
+	p.mu.Unlock()
+
+	// Run cleanup with 1s timeout
+	p.removeIdleUpstreams(time.Second)
+
+	p.mu.RLock()
+	remaining := p.upstreams[key]
+	p.mu.RUnlock()
+
+	assert.Empty(t, remaining, "idle upstream should have been removed")
+	assert.True(t, m.stopped.Load(), "idle upstream should be marked stopped")
+}
+
+func TestActiveUpstreamNotRemoved(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddress:   "localhost",
+		ListenPort:      15696,
+		UpstreamURL:     "amqp://localhost:5672",
+		PoolIdleTimeout: 1,
+		PoolMaxChannels: 65535,
+	}
+	p, err := NewProxy(cfg, discardLogger())
+	require.NoError(t, err)
+
+	key := p.getPoolKey("user", "pass", "/")
+	m := newTestManagedUpstream(65535)
+	// upstream has a registered client
+	client := newStubClient()
+	m.Register(client)
+	p.mu.Lock()
+	p.upstreams[key] = []*ManagedUpstream{m}
+	p.mu.Unlock()
+
+	p.removeIdleUpstreams(time.Second)
+
+	p.mu.RLock()
+	remaining := p.upstreams[key]
+	p.mu.RUnlock()
+	assert.Len(t, remaining, 1, "active upstream should not be removed")
+	assert.False(t, m.stopped.Load())
+}
+
 func TestClientRejectedWhenUpstreamUnavailable(t *testing.T) {
 	lc, logger := newCapture()
 	cfg := &config.Config{

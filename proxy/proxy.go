@@ -60,6 +60,13 @@ func (p *Proxy) Start() error {
 	p.netListener = listener
 	p.mu.Unlock()
 
+	done := make(chan struct{})
+	defer close(done) // signals cleanup goroutine when Start returns
+
+	if p.config.PoolIdleTimeout > 0 {
+		go p.startIdleCleanup(done)
+	}
+
 	p.logger.Info("proxy started",
 		slog.String("addr", fmt.Sprintf("%s:%d", p.config.ListenAddress, p.config.ListenPort)),
 	)
@@ -260,6 +267,20 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 	}()
 
 	managed.Register(cc)
+	if managed.stopped.Load() {
+		// Upstream was removed by idle cleanup between lookup and register.
+		managed.Deregister(cc)
+		p.logger.Warn("client rejected — upstream stopped during registration",
+			slog.String("remote_addr", remoteAddr),
+		)
+		_ = WriteFrame(cc.Writer, &Frame{
+			Type:    FrameTypeMethod,
+			Channel: 0,
+			Payload: serializeConnectionClose(503, "upstream unavailable"),
+		})
+		_ = cc.Writer.Flush()
+		return
+	}
 	defer func() {
 		managed.Deregister(cc)
 		p.releaseClientChannels(managed, cc)
@@ -354,6 +375,48 @@ func (p *Proxy) upstreamTLSConfig() (*tls.Config, error) {
 		p.config.TLSClientKey,
 		p.config.TLSSkipVerify,
 	)
+}
+
+// removeIdleUpstreams sweeps all upstreams under write lock and stops any
+// that have been idle longer than timeout.
+func (p *Proxy) removeIdleUpstreams(timeout time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key, upstreams := range p.upstreams {
+		kept := upstreams[:0]
+		for _, m := range upstreams {
+			if m.markStoppedIfIdle(timeout) {
+				p.logger.Info("upstream idle timeout",
+					slog.String("upstream_addr", m.upstreamAddr),
+					slog.String("user", m.username),
+					slog.String("vhost", m.vhost),
+				)
+			} else {
+				kept = append(kept, m)
+			}
+		}
+		if len(kept) == 0 {
+			delete(p.upstreams, key)
+		} else {
+			p.upstreams[key] = kept
+		}
+	}
+}
+
+// startIdleCleanup runs on a 30s ticker and removes idle upstreams.
+// It exits when done is closed.
+func (p *Proxy) startIdleCleanup(done <-chan struct{}) {
+	timeout := time.Duration(p.config.PoolIdleTimeout) * time.Second
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			p.removeIdleUpstreams(timeout)
+		case <-done:
+			return
+		}
+	}
 }
 
 func (p *Proxy) Stop() error {
