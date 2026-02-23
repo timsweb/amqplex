@@ -8,11 +8,13 @@ import (
 )
 
 type Config struct {
-	ListenAddress   string
-	ListenPort      int
-	PoolIdleTimeout int
-	PoolMaxChannels int
-	UpstreamURL     string
+	ListenAddress          string
+	ListenPort             int
+	PoolIdleTimeout        int
+	PoolMaxChannels        int
+	MaxUpstreamConnections int // 0 = unlimited
+	MaxClientConnections   int // 0 = unlimited
+	UpstreamURL            string
 	// Server TLS configuration (for accepting connections)
 	TLSCert string
 	TLSKey  string
@@ -31,6 +33,8 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 	v.SetDefault("listen.port", 5673)
 	v.SetDefault("pool.idle_timeout", 5)
 	v.SetDefault("pool.max_channels", 65535)
+	v.SetDefault("pool.max_connections", 0)
+	v.SetDefault("max_client_connections", 0)
 
 	// Set env prefix
 	if envPrefix != "" {
@@ -50,11 +54,13 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	cfg := &Config{
-		ListenAddress:   v.GetString("listen.address"),
-		ListenPort:      v.GetInt("listen.port"),
-		PoolIdleTimeout: v.GetInt("pool.idle_timeout"),
-		PoolMaxChannels: v.GetInt("pool.max_channels"),
-		UpstreamURL:     v.GetString("upstream.url"),
+		ListenAddress:          v.GetString("listen.address"),
+		ListenPort:             v.GetInt("listen.port"),
+		PoolIdleTimeout:        v.GetInt("pool.idle_timeout"),
+		PoolMaxChannels:        v.GetInt("pool.max_channels"),
+		MaxUpstreamConnections: v.GetInt("pool.max_connections"),
+		MaxClientConnections:   v.GetInt("max_client_connections"),
+		UpstreamURL:            v.GetString("upstream.url"),
 		// Server TLS fields
 		TLSCert: v.GetString("tls.cert"),
 		TLSKey:  v.GetString("tls.key"),
