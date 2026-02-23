@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
@@ -279,7 +280,7 @@ func TestManagedUpstreamLogsConnected(t *testing.T) {
 	m.Start(uc)
 	defer m.stopped.Store(true)
 
-	assert.True(t, lc.waitForMessage("upstream connected", 200*time.Millisecond))
+	require.True(t, lc.waitForMessage("upstream connected", 200*time.Millisecond), "expected 'upstream connected' log")
 	val, ok := lc.attrValue("upstream_addr")
 	assert.True(t, ok)
 	assert.Equal(t, "localhost:5672", val.String())
@@ -319,5 +320,6 @@ func TestManagedUpstreamLogsReconnect(t *testing.T) {
 	m.handleUpstreamFailure(errors.New("read: connection reset by peer"))
 
 	assert.True(t, lc.waitForMessage("upstream lost", 500*time.Millisecond))
+	assert.True(t, lc.waitForMessage("upstream reconnecting", 500*time.Millisecond))
 	assert.True(t, lc.waitForMessage("upstream reconnected", 500*time.Millisecond))
 }
