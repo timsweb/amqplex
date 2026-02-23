@@ -425,8 +425,8 @@ func (p *Proxy) removeIdleUpstreams(timeout time.Duration) {
 	}
 }
 
-// startIdleCleanup runs on a 30s ticker and removes idle upstreams.
-// It exits when done is closed.
+// startIdleCleanup runs on a configurable ticker (PoolCleanupInterval seconds,
+// defaulting to 30) and removes idle upstreams. It exits when done is closed.
 func (p *Proxy) startIdleCleanup(done <-chan struct{}) {
 	timeout := time.Duration(p.config.PoolIdleTimeout) * time.Second
 	interval := p.config.PoolCleanupInterval
