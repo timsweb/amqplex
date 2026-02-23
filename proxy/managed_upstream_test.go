@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -250,4 +251,73 @@ func TestReadLoop_HeartbeatNotSentToClients(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, FrameTypeHeartbeat, echo.Type)
 	assert.Empty(t, stub.frames, "heartbeat must not be forwarded to clients")
+}
+
+func TestManagedUpstreamLogsConnected(t *testing.T) {
+	lc, logger := newCapture()
+
+	proxyConn, _ := upstreamPipe(t)
+	uc := &UpstreamConn{
+		Conn:   proxyConn,
+		Reader: bufio.NewReader(proxyConn),
+		Writer: bufio.NewWriter(proxyConn),
+	}
+
+	m := &ManagedUpstream{
+		username:      "user",
+		password:      "pass",
+		vhost:         "/",
+		maxChannels:   10,
+		usedChannels:  make(map[uint16]bool),
+		channelOwners: make(map[uint16]channelEntry),
+		clients:       make([]clientWriter, 0),
+		upstreamAddr:  "localhost:5672",
+		logger:        logger,
+	}
+	m.dialFn = func() (*UpstreamConn, error) { return nil, nil }
+
+	m.Start(uc)
+	defer m.stopped.Store(true)
+
+	assert.True(t, lc.waitForMessage("upstream connected", 200*time.Millisecond))
+	val, ok := lc.attrValue("upstream_addr")
+	assert.True(t, ok)
+	assert.Equal(t, "localhost:5672", val.String())
+}
+
+func TestManagedUpstreamLogsReconnect(t *testing.T) {
+	lc, logger := newCapture()
+
+	var attempts int32
+	m := &ManagedUpstream{
+		username:      "user",
+		password:      "pass",
+		vhost:         "/",
+		maxChannels:   10,
+		usedChannels:  make(map[uint16]bool),
+		channelOwners: make(map[uint16]channelEntry),
+		clients:       make([]clientWriter, 0),
+		reconnectBase: 10 * time.Millisecond,
+		upstreamAddr:  "localhost:5672",
+		logger:        logger,
+	}
+
+	proxyConn2, _ := upstreamPipe(t)
+
+	m.dialFn = func() (*UpstreamConn, error) {
+		n := atomic.AddInt32(&attempts, 1)
+		if n < 2 {
+			return nil, errors.New("connection refused")
+		}
+		return &UpstreamConn{
+			Conn:   proxyConn2,
+			Reader: bufio.NewReader(proxyConn2),
+			Writer: bufio.NewWriter(proxyConn2),
+		}, nil
+	}
+
+	m.handleUpstreamFailure(errors.New("read: connection reset by peer"))
+
+	assert.True(t, lc.waitForMessage("upstream lost", 500*time.Millisecond))
+	assert.True(t, lc.waitForMessage("upstream reconnected", 500*time.Millisecond))
 }

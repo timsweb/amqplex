@@ -134,6 +134,8 @@ func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*M
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
 		clients:       make([]clientWriter, 0),
+		upstreamAddr:  addr,
+		logger:        p.logger,
 	}
 	m.dialFn = func() (*UpstreamConn, error) {
 		nc, err := p.dialUpstream(network, addr)

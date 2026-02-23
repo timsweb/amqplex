@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,9 @@ type ManagedUpstream struct {
 
 	stopped   atomic.Bool
 	heartbeat uint16 // negotiated heartbeat interval in seconds
+
+	upstreamAddr string       // "host:port" — used in log fields
+	logger       *slog.Logger
 }
 
 // AllocateChannel finds the lowest free upstream channel ID, registers the
@@ -127,6 +131,13 @@ func (m *ManagedUpstream) Start(conn *UpstreamConn) {
 	m.conn = conn
 	m.mu.Unlock()
 	go m.readLoop()
+	if m.logger != nil {
+		m.logger.Info("upstream connected",
+			slog.String("upstream_addr", m.upstreamAddr),
+			slog.String("user", m.username),
+			slog.String("vhost", m.vhost),
+		)
+	}
 }
 
 func (m *ManagedUpstream) readLoop() {
@@ -141,7 +152,7 @@ func (m *ManagedUpstream) readLoop() {
 		frame, err := ParseFrame(conn.Reader)
 		if err != nil {
 			if !m.stopped.Load() {
-				m.handleUpstreamFailure()
+				m.handleUpstreamFailure(err)
 			}
 			return
 		}
@@ -179,7 +190,20 @@ func (m *ManagedUpstream) readLoop() {
 }
 
 // handleUpstreamFailure tears down all clients and schedules reconnection.
-func (m *ManagedUpstream) handleUpstreamFailure() {
+func (m *ManagedUpstream) handleUpstreamFailure(cause error) {
+	if m.logger != nil {
+		errStr := ""
+		if cause != nil {
+			errStr = cause.Error()
+		}
+		m.logger.Warn("upstream lost",
+			slog.String("upstream_addr", m.upstreamAddr),
+			slog.String("user", m.username),
+			slog.String("vhost", m.vhost),
+			slog.String("error", errStr),
+		)
+	}
+
 	m.mu.Lock()
 	clients := append([]clientWriter(nil), m.clients...)
 	m.mu.Unlock()
@@ -201,7 +225,18 @@ func (m *ManagedUpstream) reconnectLoop() {
 	wait := base
 	const maxWait = 30 * time.Second
 
+	attempt := 0
 	for !m.stopped.Load() {
+		attempt++
+		if m.logger != nil {
+			m.logger.Warn("upstream reconnecting",
+				slog.String("upstream_addr", m.upstreamAddr),
+				slog.String("user", m.username),
+				slog.String("vhost", m.vhost),
+				slog.Int("attempt", attempt),
+				slog.Int64("backoff_ms", wait.Milliseconds()),
+			)
+		}
 		time.Sleep(wait)
 
 		conn, err := m.dialFn()
@@ -223,6 +258,14 @@ func (m *ManagedUpstream) reconnectLoop() {
 		m.mu.Unlock()
 
 		go m.readLoop()
+		if m.logger != nil {
+			m.logger.Info("upstream reconnected",
+				slog.String("upstream_addr", m.upstreamAddr),
+				slog.String("user", m.username),
+				slog.String("vhost", m.vhost),
+				slog.Int("attempt", attempt),
+			)
+		}
 		return
 	}
 }
