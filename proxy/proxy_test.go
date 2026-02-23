@@ -97,11 +97,7 @@ func TestProxyLogsStartAndStop(t *testing.T) {
 		_ = p.Start()
 	}()
 	<-started
-	time.Sleep(10 * time.Millisecond) // let Start() reach Accept()
-
-	// Check "proxy started" was logged with addr field
-	msgs := lc.messages()
-	require.Contains(t, msgs, "proxy started")
+	require.True(t, lc.waitForMessage("proxy started", 500*time.Millisecond), "expected 'proxy started' log")
 	addrVal, ok := lc.attrValue("addr")
 	assert.True(t, ok, "expected addr field in 'proxy started' log")
 	assert.Contains(t, addrVal.String(), "15690")

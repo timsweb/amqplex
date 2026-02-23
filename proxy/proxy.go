@@ -27,6 +27,9 @@ type Proxy struct {
 }
 
 func NewProxy(cfg *config.Config, logger *slog.Logger) (*Proxy, error) {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	listener, err := NewAMQPListener(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listener: %w", err)

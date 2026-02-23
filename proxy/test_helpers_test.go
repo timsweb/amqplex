@@ -51,7 +51,9 @@ func (lc *logCapture) messages() []string {
 	return msgs
 }
 
-// attrValue returns the value of a named attribute from any recorded log entry.
+// attrValue returns the value of the first attribute with the given key found
+// across all recorded log entries (any message, any level). If multiple entries
+// carry the same key, only the first is returned.
 func (lc *logCapture) attrValue(key string) (slog.Value, bool) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
