@@ -5,6 +5,7 @@ package tests
 import (
 	"fmt"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -18,10 +19,8 @@ import (
 // TestMain waits for RabbitMQ to be reachable before running the suite.
 func TestMain(m *testing.M) {
 	if !waitForPort("localhost:5672", 30*time.Second) {
-		fmt.Println("RabbitMQ not reachable on localhost:5672 after 30s — is Docker Compose up?")
-		// Exit 1 so the test run is clearly a setup failure, not a test failure.
-		// m.Run() is not called.
-		return
+		fmt.Fprintln(os.Stderr, "RabbitMQ not reachable on localhost:5672 after 30s — is Docker Compose up?")
+		os.Exit(1)
 	}
 	m.Run()
 }
@@ -176,8 +175,7 @@ func TestClientReconnect(t *testing.T) {
 
 	// First connection: publish one message then disconnect.
 	{
-		conn, err := amqp.Dial(fmt.Sprintf("amqp://guest:guest@localhost:%d/", 15683))
-		require.NoError(t, err)
+		conn := dialProxy(t, 15683)
 		ch, err := conn.Channel()
 		require.NoError(t, err)
 		_, err = ch.QueueDeclare(queueName, true, false, false, false, nil) // durable
@@ -227,8 +225,7 @@ func TestIdleUpstreamCleanup(t *testing.T) {
 
 	// First connection: declare a durable queue, publish, then disconnect.
 	{
-		conn, err := amqp.Dial(fmt.Sprintf("amqp://guest:guest@localhost:%d/", 15684))
-		require.NoError(t, err)
+		conn := dialProxy(t, 15684)
 		ch, err := conn.Channel()
 		require.NoError(t, err)
 		_, err = ch.QueueDeclare(queueName, true, false, false, false, nil)
