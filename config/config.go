@@ -33,8 +33,8 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 	v.SetDefault("listen.port", 5673)
 	v.SetDefault("pool.idle_timeout", 5)
 	v.SetDefault("pool.max_channels", 65535)
-	v.SetDefault("pool.max_connections", 0)
-	v.SetDefault("max_client_connections", 0)
+	v.SetDefault("pool.max_upstream_connections", 0)
+	v.SetDefault("pool.max_client_connections", 0)
 
 	// Set env prefix
 	if envPrefix != "" {
@@ -58,8 +58,8 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 		ListenPort:             v.GetInt("listen.port"),
 		PoolIdleTimeout:        v.GetInt("pool.idle_timeout"),
 		PoolMaxChannels:        v.GetInt("pool.max_channels"),
-		MaxUpstreamConnections: v.GetInt("pool.max_connections"),
-		MaxClientConnections:   v.GetInt("max_client_connections"),
+		MaxUpstreamConnections: v.GetInt("pool.max_upstream_connections"),
+		MaxClientConnections:   v.GetInt("pool.max_client_connections"),
 		UpstreamURL:            v.GetString("upstream.url"),
 		// Server TLS fields
 		TLSCert: v.GetString("tls.cert"),

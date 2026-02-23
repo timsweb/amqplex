@@ -36,8 +36,8 @@ type Config struct {
 In `LoadConfig`, after the existing `v.SetDefault("pool.max_channels", 65535)` line, add:
 
 ```go
-v.SetDefault("pool.max_connections", 0)
-v.SetDefault("max_client_connections", 0)
+v.SetDefault("pool.max_upstream_connections", 0)
+v.SetDefault("pool.max_client_connections", 0)
 ```
 
 ### Step 3: Wire up the populated Config struct
@@ -45,8 +45,8 @@ v.SetDefault("max_client_connections", 0)
 In the `cfg := &Config{...}` block, after `PoolMaxChannels: v.GetInt("pool.max_channels"),`, add:
 
 ```go
-MaxUpstreamConnections: v.GetInt("pool.max_connections"),
-MaxClientConnections:   v.GetInt("max_client_connections"),
+MaxUpstreamConnections: v.GetInt("pool.max_upstream_connections"),
+MaxClientConnections:   v.GetInt("pool.max_client_connections"),
 ```
 
 ### Step 4: Build to confirm no errors
