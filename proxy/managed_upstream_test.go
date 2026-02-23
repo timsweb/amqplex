@@ -286,6 +286,30 @@ func TestManagedUpstreamLogsConnected(t *testing.T) {
 	assert.Equal(t, "localhost:5672", val.String())
 }
 
+func TestAllocateReleaseChannelLogged(t *testing.T) {
+	lc, logger := newCapture()
+
+	m := &ManagedUpstream{
+		username:      "user",
+		password:      "pass",
+		vhost:         "/",
+		maxChannels:   10,
+		usedChannels:  make(map[uint16]bool),
+		channelOwners: make(map[uint16]channelEntry),
+		clients:       make([]clientWriter, 0),
+		logger:        logger,
+		upstreamAddr:  "localhost:5672",
+	}
+
+	client := &stubClient{}
+	upstreamID, err := m.AllocateChannel(1, client)
+	require.NoError(t, err)
+	assert.Contains(t, lc.messages(), "channel allocated")
+
+	m.ReleaseChannel(upstreamID)
+	assert.Contains(t, lc.messages(), "channel released")
+}
+
 func TestManagedUpstreamLogsReconnect(t *testing.T) {
 	lc, logger := newCapture()
 

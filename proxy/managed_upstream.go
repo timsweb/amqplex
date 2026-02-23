@@ -57,6 +57,14 @@ func (m *ManagedUpstream) AllocateChannel(clientChanID uint16, cw clientWriter) 
 		if !m.usedChannels[id] {
 			m.usedChannels[id] = true
 			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
+			if m.logger != nil {
+				m.logger.Debug("channel allocated",
+					slog.Int("client_chan", int(clientChanID)),
+					slog.Int("upstream_chan", int(id)),
+					slog.String("user", m.username),
+					slog.String("vhost", m.vhost),
+				)
+			}
 			return id, nil
 		}
 	}
@@ -69,6 +77,13 @@ func (m *ManagedUpstream) ReleaseChannel(upstreamChanID uint16) {
 	defer m.mu.Unlock()
 	delete(m.usedChannels, upstreamChanID)
 	delete(m.channelOwners, upstreamChanID)
+	if m.logger != nil {
+		m.logger.Debug("channel released",
+			slog.Int("upstream_chan", int(upstreamChanID)),
+			slog.String("user", m.username),
+			slog.String("vhost", m.vhost),
+		)
+	}
 }
 
 // HasCapacity reports whether this upstream has at least one free channel slot.
