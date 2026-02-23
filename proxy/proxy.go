@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/tlsutil"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/tlsutil"
 )
 
 type Proxy struct {

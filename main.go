@@ -11,9 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/health"
-	"github.com/timsweb/amqproxy/proxy"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/health"
+	"github.com/timsweb/amqplex/proxy"
 )
 
 func main() {

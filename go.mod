@@ -1,4 +1,4 @@
-module github.com/timsweb/amqproxy
+module github.com/timsweb/amqplex
 
 go 1.23.0
 

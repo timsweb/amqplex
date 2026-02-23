@@ -7,7 +7,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/timsweb/amqproxy/config"
+	"github.com/timsweb/amqplex/config"
 )
 
 type AMQPListener struct {

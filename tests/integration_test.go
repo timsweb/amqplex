@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/proxy"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/proxy"
 )
 
 func TestProxyIntegration(t *testing.T) {
