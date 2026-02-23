@@ -57,6 +57,9 @@ func (m *ManagedUpstream) AllocateChannel(clientChanID uint16, cw clientWriter) 
 		if !m.usedChannels[id] {
 			m.usedChannels[id] = true
 			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
+			// Note: logger.Debug is called while m.mu is held. This is safe with the
+			// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
+			// handler acquired m.mu. Keep handlers side-effect-free.
 			if m.logger != nil {
 				m.logger.Debug("channel allocated",
 					slog.Int("client_chan", int(clientChanID)),
@@ -77,6 +80,9 @@ func (m *ManagedUpstream) ReleaseChannel(upstreamChanID uint16) {
 	defer m.mu.Unlock()
 	delete(m.usedChannels, upstreamChanID)
 	delete(m.channelOwners, upstreamChanID)
+	// Note: logger.Debug is called while m.mu is held. This is safe with the
+	// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
+	// handler acquired m.mu. Keep handlers side-effect-free.
 	if m.logger != nil {
 		m.logger.Debug("channel released",
 			slog.Int("upstream_chan", int(upstreamChanID)),

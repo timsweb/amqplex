@@ -301,10 +301,13 @@ func TestAllocateReleaseChannelLogged(t *testing.T) {
 		upstreamAddr:  "localhost:5672",
 	}
 
-	client := &stubClient{}
+	client := newStubClient()
 	upstreamID, err := m.AllocateChannel(1, client)
 	require.NoError(t, err)
 	assert.Contains(t, lc.messages(), "channel allocated")
+	upstreamChanVal, ok := lc.attrValue("upstream_chan")
+	assert.True(t, ok, "expected upstream_chan field in 'channel allocated' log")
+	assert.Equal(t, int64(upstreamID), upstreamChanVal.Int64())
 
 	m.ReleaseChannel(upstreamID)
 	assert.Contains(t, lc.messages(), "channel released")
