@@ -73,7 +73,18 @@ func (p *Proxy) Start() error {
 			// Transient error: continue accepting
 			continue
 		}
+		// Hold the read lock while calling wg.Add so it cannot race with
+		// Stop's write lock + wg.Wait. After Stop sets netListener=nil and
+		// releases the write lock, this guard will catch any stale-accepted
+		// connections and skip launching a goroutine.
+		p.mu.RLock()
+		if p.netListener == nil {
+			p.mu.RUnlock()
+			conn.Close()
+			return nil
+		}
 		p.wg.Add(1)
+		p.mu.RUnlock()
 		go func() {
 			defer p.wg.Done()
 			p.handleConnection(conn)
