@@ -55,12 +55,14 @@ func main() {
 		close(stopDone)
 	}()
 
-	// Start health check server
+	// Start health/metrics server
 	go func() {
-		healthAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort+1)
-		healthHandler := health.NewHealthHandler()
-		log.Printf("Health check server listening on %s", healthAddr)
-		log.Fatal(http.ListenAndServe(healthAddr, healthHandler))
+		addr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort+1)
+		mux := http.NewServeMux()
+		mux.Handle("/", health.NewHealthHandler())
+		mux.Handle("/metrics", p.MetricsHandler())
+		log.Printf("Health/metrics server listening on %s", addr)
+		log.Fatal(http.ListenAndServe(addr, mux))
 	}()
 
 	// Start AMQP proxy — blocks until listener is closed (by Stop()).
