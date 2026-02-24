@@ -1,0 +1,11 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      # Allow guest user connections from non-localhost addresses.
+      # On macOS with Docker Desktop, host→container port-forwarded connections
+      # appear to RabbitMQ as coming from a Docker bridge IP, not 127.0.0.1.
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit loopback_users []
