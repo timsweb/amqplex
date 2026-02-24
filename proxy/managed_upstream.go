@@ -36,12 +36,14 @@ type ManagedUpstream struct {
 	conn             *UpstreamConn
 	usedChannels     map[uint16]bool
 	channelOwners    map[uint16]channelEntry
+	pendingClose     map[uint16]bool // channels awaiting CloseOk; slot held until CloseOk arrives
 	clients          []clientWriter
 	lastEmptyTime    time.Time // protected by mu; zero when clients > 0
 	upstreamWriterMu sync.Mutex // serialises all writes to conn.Writer
 
-	stopped   atomic.Bool
-	heartbeat uint16 // negotiated heartbeat interval in seconds
+	stopped        atomic.Bool
+	reconnectTotal atomic.Int64 // cumulative reconnect attempts since start
+	heartbeat      uint16       // negotiated heartbeat interval in seconds
 
 	upstreamAddr string       // "host:port" — used in log fields
 	logger       *slog.Logger
@@ -55,7 +57,7 @@ func (m *ManagedUpstream) AllocateChannel(clientChanID uint16, cw clientWriter) 
 	defer m.mu.Unlock()
 
 	for id := uint16(1); id <= m.maxChannels; id++ {
-		if !m.usedChannels[id] {
+		if !m.usedChannels[id] && !m.pendingClose[id] {
 			m.usedChannels[id] = true
 			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
 			// Note: logger.Debug is called while m.mu is held. This is safe with the
@@ -91,6 +93,18 @@ func (m *ManagedUpstream) ReleaseChannel(upstreamChanID uint16) {
 			slog.String("vhost", m.vhost),
 		)
 	}
+}
+
+// ScheduleChannelClose marks an upstream channel as pending close after the proxy
+// sends Channel.Close on the client's behalf during cleanup. The channel slot stays
+// reserved in usedChannels (so it cannot be reallocated) and channelOwners is
+// cleared (so no frames are forwarded to the old client). When Channel.CloseOk
+// arrives from the broker, readLoop removes the slot from both maps.
+func (m *ManagedUpstream) ScheduleChannelClose(upstreamChanID uint16) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pendingClose[upstreamChanID] = true
+	delete(m.channelOwners, upstreamChanID)
 }
 
 // HasCapacity reports whether this upstream has at least one free channel slot.
@@ -203,6 +217,18 @@ func (m *ManagedUpstream) readLoop() {
 			}
 
 		default:
+			// If this is Channel.CloseOk for a proxy-initiated close, release the
+			// slot and discard the frame — don't forward to any client.
+			if isChannelCloseOk(frame) {
+				m.mu.Lock()
+				if m.pendingClose[frame.Channel] {
+					delete(m.pendingClose, frame.Channel)
+					delete(m.usedChannels, frame.Channel)
+					m.mu.Unlock()
+					continue
+				}
+				m.mu.Unlock()
+			}
 			// Remap channel and dispatch to the owning client.
 			m.mu.Lock()
 			entry, ok := m.channelOwners[frame.Channel]
@@ -279,6 +305,7 @@ func (m *ManagedUpstream) reconnectLoop() {
 	attempt := 0
 	for !m.stopped.Load() {
 		attempt++
+		m.reconnectTotal.Add(1)
 		if m.logger != nil {
 			m.logger.Warn("upstream reconnecting",
 				slog.String("upstream_addr", m.upstreamAddr),
@@ -305,6 +332,7 @@ func (m *ManagedUpstream) reconnectLoop() {
 		// Reset channel state — all clients were torn down on failure
 		m.usedChannels = make(map[uint16]bool)
 		m.channelOwners = make(map[uint16]channelEntry)
+		m.pendingClose = make(map[uint16]bool)
 		m.clients = make([]clientWriter, 0)
 		m.lastEmptyTime = time.Now() // no clients yet after reconnect
 		m.mu.Unlock()

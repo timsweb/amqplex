@@ -364,6 +364,22 @@ func TestRegisterResetsLastEmptyTime(t *testing.T) {
 	assert.True(t, m.lastEmptyTime.IsZero())
 }
 
+func TestReconnectTotalIncrements(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	m.reconnectBase = time.Millisecond
+
+	var calls atomic.Int32
+	m.dialFn = func() (*UpstreamConn, error) {
+		if calls.Add(1) >= 3 {
+			m.stopped.Store(true)
+		}
+		return nil, errors.New("dial failed")
+	}
+
+	m.reconnectLoop()
+	assert.GreaterOrEqual(t, m.reconnectTotal.Load(), int64(2))
+}
+
 func TestManagedUpstreamLogsReconnect(t *testing.T) {
 	lc, logger := newCapture()
 
