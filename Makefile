@@ -13,8 +13,8 @@ integration-test:
 	go test -v ./tests/...
 
 integration:
-	docker compose up -d
-	go test -tags integration -v -timeout 120s ./tests/ ; docker compose down
+	docker compose -f docker-compose.test.yml up -d
+	go test -tags integration -v -timeout 120s ./tests/ ; docker compose -f docker-compose.test.yml down
 
 clean:
 	rm -rf bin/ test_certs/
