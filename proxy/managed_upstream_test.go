@@ -20,6 +20,7 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 		maxChannels:   maxChannels,
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
+		pendingClose:  make(map[uint16]bool),
 		clients:       make([]clientWriter, 0),
 		dialFn:        func() (*UpstreamConn, error) { return nil, errors.New("no dial fn") },
 	}
