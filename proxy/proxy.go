@@ -175,6 +175,7 @@ func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*M
 		maxChannels:   uint16(p.config.PoolMaxChannels),
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
+		pendingClose:  make(map[uint16]bool),
 		clients:       make([]clientWriter, 0),
 		upstreamAddr:  addr,
 		logger:        p.logger,
@@ -321,6 +322,19 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 			continue
 		}
 
+		// Intercept Connection.Close from the client — do not forward to the shared
+		// upstream (that would tear down the connection for all other clients).
+		// Respond with Connection.Close-OK and exit cleanly.
+		if isConnectionClose(frame) {
+			_ = WriteFrame(cc.Writer, &Frame{
+				Type:    FrameTypeMethod,
+				Channel: 0,
+				Payload: SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 51}),
+			})
+			_ = cc.Writer.Flush()
+			return
+		}
+
 		if isChannelOpen(frame) {
 			upstreamID, err := managed.AllocateChannel(frame.Channel, cc)
 			if err != nil {
@@ -369,11 +383,15 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 
 	for clientID, upstreamID := range channels {
 		cc.Mu.RLock()
-		ch, ok := cc.ClientChannels[clientID]
+		_, ok := cc.ClientChannels[clientID]
 		cc.Mu.RUnlock()
 
-		if ok && !ch.Safe {
-			// Send Channel.Close to upstream for unsafe channels.
+		if ok {
+			// Send Channel.Close to upstream so the channel is truly closed before
+			// it can be reallocated. ScheduleChannelClose keeps the slot reserved in
+			// usedChannels until Channel.CloseOk arrives, preventing a new client from
+			// being allocated the same upstream channel number before the broker has
+			// finished closing it (which would cause a "second channel.open" error).
 			closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
 			closePayload = append(closePayload, 0, 0)                       // reply-code = 0
 			closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
@@ -383,9 +401,10 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 				Channel: upstreamID,
 				Payload: closePayload,
 			})
+			managed.ScheduleChannelClose(upstreamID)
+		} else {
+			managed.ReleaseChannel(upstreamID)
 		}
-
-		managed.ReleaseChannel(upstreamID)
 		cc.UnmapChannel(clientID)
 	}
 }

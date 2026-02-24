@@ -106,6 +106,24 @@ func TestIsChannelClose(t *testing.T) {
 	assert.False(t, isChannelClose(notClose))
 }
 
+func TestIsConnectionClose(t *testing.T) {
+	// Connection.Close: class=10 (0x00,0x0A), method=50 (0x00,0x32), channel=0
+	frame := &Frame{Type: FrameTypeMethod, Channel: 0, Payload: []byte{0, 10, 0, 50, 0, 0}}
+	assert.True(t, isConnectionClose(frame))
+
+	// Non-zero channel → not a connection-level frame
+	wrongChan := &Frame{Type: FrameTypeMethod, Channel: 1, Payload: []byte{0, 10, 0, 50}}
+	assert.False(t, isConnectionClose(wrongChan))
+
+	// Connection.Close-Ok (method=51) is not Connection.Close
+	closeOk := &Frame{Type: FrameTypeMethod, Channel: 0, Payload: []byte{0, 10, 0, 51}}
+	assert.False(t, isConnectionClose(closeOk))
+
+	// Channel.Close (class=20) is not Connection.Close
+	chanClose := &Frame{Type: FrameTypeMethod, Channel: 0, Payload: []byte{0, 20, 0, 40}}
+	assert.False(t, isConnectionClose(chanClose))
+}
+
 func TestUnmapChannelCleansClientChannels(t *testing.T) {
 	cc := NewClientConnection(nil, nil)
 	cc.MapChannel(1, 100)

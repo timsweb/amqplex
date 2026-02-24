@@ -253,6 +253,15 @@ func isChannelOpen(frame *Frame) bool {
 		frame.Payload[2] == 0 && frame.Payload[3] == 10
 }
 
+// isChannelCloseOk returns true for Channel.CloseOk (class=20, method=41) frames.
+func isChannelCloseOk(frame *Frame) bool {
+	if frame.Type != FrameTypeMethod || len(frame.Payload) < 4 {
+		return false
+	}
+	return frame.Payload[0] == 0 && frame.Payload[1] == 20 &&
+		frame.Payload[2] == 0 && frame.Payload[3] == 41
+}
+
 // isChannelClose returns true for Channel.Close (40) and Channel.CloseOk (41).
 func isChannelClose(frame *Frame) bool {
 	if frame.Type != FrameTypeMethod || len(frame.Payload) < 4 {
@@ -262,6 +271,17 @@ func isChannelClose(frame *Frame) bool {
 		return false
 	}
 	return frame.Payload[2] == 0 && (frame.Payload[3] == 40 || frame.Payload[3] == 41)
+}
+
+// isConnectionClose returns true for Connection.Close (class=10, method=50) frames.
+// The proxy intercepts these from clients rather than forwarding them to the shared
+// upstream — closing one client's connection must not tear down the upstream for others.
+func isConnectionClose(frame *Frame) bool {
+	if frame.Type != FrameTypeMethod || frame.Channel != 0 || len(frame.Payload) < 4 {
+		return false
+	}
+	return frame.Payload[0] == 0 && frame.Payload[1] == 10 &&
+		frame.Payload[2] == 0 && frame.Payload[3] == 50
 }
 
 // serializeConnectionClose builds a Connection.Close method payload.
