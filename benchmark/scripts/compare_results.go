@@ -80,7 +80,7 @@ func main() {
 	}
 	w.Flush()
 
-	fmt.Println("\n=== Aggregate Statistics ===\n")
+	fmt.Println("\n=== Aggregate Statistics ===")
 	printAggregate("AMQplex", results, metrics.ProxyAMQplex)
 	printAggregate("AMQProxy", results, metrics.ProxyAMQProxy)
 }

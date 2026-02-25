@@ -66,7 +66,7 @@ func (r *Reporter) PrintSummary() {
 		scenarios[result.Scenario][result.Proxy] = append(scenarios[result.Scenario][result.Proxy], result)
 	}
 
-	fmt.Println("\n=== Benchmark Summary ===\n")
+	fmt.Println("\n=== Benchmark Summary ===")
 	for scenario, proxies := range scenarios {
 		fmt.Printf("Scenario: %s\n", scenario)
 		fmt.Printf("%-12s %-15s %-15s %-15s %-15s\n",
