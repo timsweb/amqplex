@@ -107,3 +107,17 @@ make release
 # Stop RabbitMQ
 make docker-down
 ```
+
+### Benchmarks
+
+Run performance benchmarks comparing AMQplex against cloudamqp/amqproxy:
+
+```bash
+# Run all benchmarks
+make benchmark-all
+
+# View comparison
+make benchmark-compare
+```
+
+See `benchmark/README.md` for detailed benchmark documentation.
