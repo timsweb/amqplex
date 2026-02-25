@@ -308,12 +308,11 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		p.logger.Warn("client rejected — upstream stopped during registration",
 			slog.String("remote_addr", remoteAddr),
 		)
-		_ = WriteFrame(cc.Writer, &Frame{
+		_ = cc.DeliverFrame(&Frame{
 			Type:    FrameTypeMethod,
 			Channel: 0,
 			Payload: serializeConnectionClose(503, "upstream unavailable"),
 		})
-		_ = cc.Writer.Flush()
 		return
 	}
 	defer func() {
@@ -338,12 +337,11 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		// upstream (that would tear down the connection for all other clients).
 		// Respond with Connection.Close-OK and exit cleanly.
 		if isConnectionClose(frame) {
-			_ = WriteFrame(cc.Writer, &Frame{
+			_ = cc.DeliverFrame(&Frame{
 				Type:    FrameTypeMethod,
 				Channel: 0,
 				Payload: SerializeMethodHeader(&MethodHeader{ClassID: 10, MethodID: 51}),
 			})
-			_ = cc.Writer.Flush()
 			return
 		}
 
