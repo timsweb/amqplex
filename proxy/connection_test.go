@@ -22,8 +22,9 @@ func TestNewClientConnection(t *testing.T) {
 func TestSerializeConnectionStart(t *testing.T) {
 	data := serializeConnectionStart()
 
-	// Must have at least: 4 (method header) + 1 + 1 + 4 (empty table) + 4+5 ("PLAIN") + 4+5 ("en_US") = 28 bytes
-	assert.GreaterOrEqual(t, len(data), 28)
+	// mechanisms = "AMQPLAIN PLAIN" (14 bytes)
+	// Must have at least: 4 (method header) + 1 + 1 + 4 (empty table) + 4+14 ("AMQPLAIN PLAIN") + 4+5 ("en_US") = 37 bytes
+	assert.GreaterOrEqual(t, len(data), 37)
 
 	// Method header: class=10, method=10
 	assert.Equal(t, uint16(10), binary.BigEndian.Uint16(data[0:2]))
@@ -36,13 +37,13 @@ func TestSerializeConnectionStart(t *testing.T) {
 	// server-properties table: 4-byte length = 0 (empty table)
 	assert.Equal(t, uint32(0), binary.BigEndian.Uint32(data[6:10]))
 
-	// mechanisms longstr: length=5, content="PLAIN"
-	assert.Equal(t, uint32(5), binary.BigEndian.Uint32(data[10:14]))
-	assert.Equal(t, "PLAIN", string(data[14:19]))
+	// mechanisms longstr: length=14, content="AMQPLAIN PLAIN"
+	assert.Equal(t, uint32(14), binary.BigEndian.Uint32(data[10:14]))
+	assert.Equal(t, "AMQPLAIN PLAIN", string(data[14:28]))
 
 	// locales longstr: length=5, content="en_US"
-	assert.Equal(t, uint32(5), binary.BigEndian.Uint32(data[19:23]))
-	assert.Equal(t, "en_US", string(data[23:28]))
+	assert.Equal(t, uint32(5), binary.BigEndian.Uint32(data[28:32]))
+	assert.Equal(t, "en_US", string(data[32:37]))
 }
 
 func TestSendConnectionTunePayload(t *testing.T) {

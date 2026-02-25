@@ -30,29 +30,71 @@ func ParseConnectionStartOk(data []byte) (*Credentials, error) {
 	}
 	offset += tableEnd
 
-	// Skip mechanism (shortstr) - e.g., "PLAIN"
-	_, mechLen, err := parseShortString(data[offset:])
+	// Read mechanism (shortstr) - e.g., "PLAIN" or "AMQPLAIN"
+	mech, mechLen, err := parseShortString(data[offset:])
 	if err != nil {
 		return nil, err
 	}
 	offset += mechLen
 
-	// Parse response (longstr) - contains \0username\0password
+	// Parse response (longstr)
 	response, _, err := parseLongString(data[offset:])
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse PLAIN format: \0username\0password
-	parts := bytes.Split(response, []byte{0})
-	if len(parts) != 3 {
-		return nil, errors.New("invalid PLAIN auth format")
+	switch mech {
+	case "PLAIN":
+		// PLAIN format: \0username\0password
+		parts := bytes.Split(response, []byte{0})
+		if len(parts) != 3 {
+			return nil, errors.New("invalid PLAIN auth format")
+		}
+		return &Credentials{
+			Username: string(parts[1]),
+			Password: string(parts[2]),
+		}, nil
+	case "AMQPLAIN":
+		// AMQPLAIN format: inline AMQP table fields (no leading length prefix)
+		// e.g. \x05LOGINS\x00\x00\x00\x05guest\x08PASSWORDS\x00\x00\x00\x05guest
+		return parseAMQPLAIN(response)
+	default:
+		return nil, fmt.Errorf("unsupported auth mechanism: %s", mech)
 	}
+}
 
-	return &Credentials{
-		Username: string(parts[1]),
-		Password: string(parts[2]),
-	}, nil
+// parseAMQPLAIN extracts credentials from an AMQPLAIN response.
+// The response is an inline sequence of AMQP table fields (no leading 4-byte length):
+// each field is a shortstr name + 1-byte type ('S') + longstr value.
+func parseAMQPLAIN(data []byte) (*Credentials, error) {
+	fields := make(map[string]string)
+	offset := 0
+	for offset < len(data) {
+		name, n, err := parseShortString(data[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("AMQPLAIN: bad field name: %w", err)
+		}
+		offset += n
+		if offset >= len(data) {
+			return nil, errors.New("AMQPLAIN: missing field type")
+		}
+		if data[offset] != 'S' {
+			return nil, fmt.Errorf("AMQPLAIN: unsupported field type %q for %s", data[offset], name)
+		}
+		offset++
+		val, n, err := parseLongString(data[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("AMQPLAIN: bad field value for %s: %w", name, err)
+		}
+		offset += n
+		fields[name] = string(val)
+	}
+	login, ok1 := fields["LOGIN"]
+	password, ok2 := fields["PASSWORD"]
+	if !ok1 || !ok2 {
+		return nil, errors.New("AMQPLAIN: missing LOGIN or PASSWORD field")
+	}
+	return &Credentials{Username: login, Password: password}, nil
 }
 
 func parseShortString(data []byte) (string, int, error) {
