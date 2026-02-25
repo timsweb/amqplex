@@ -1,6 +1,6 @@
-# AMQProxy
+# AMQPlex
 
-High-performance AMQP proxy with connection/channel pooling and runtime certificate loading.
+High-performance AMQP multipler with connection/channel pooling and runtime certificate loading.
 
 ## Features
 - Connection pooling per credential set
@@ -17,10 +17,10 @@ High-performance AMQP proxy with connection/channel pooling and runtime certific
 make build
 
 # Run with config
-./bin/amqproxy --config config.toml
+./bin/amqplex --config config.toml
 
 # Run with defaults
-./bin/amqproxy amqps://rabbitmq:5671
+./bin/amqplex amqps://rabbitmq:5671
 ```
 
 ## Development

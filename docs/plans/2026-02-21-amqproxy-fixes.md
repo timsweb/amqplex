@@ -1278,7 +1278,7 @@ func (p *Proxy) upstreamTLSConfig() *tls.Config {
 Add to imports in `proxy/proxy.go`:
 ```go
 "crypto/tls"
-"github.com/timsweb/amqproxy/tlsutil"
+"github.com/timsweb/amqplex/tlsutil"
 ```
 
 **Step 4: Build**
@@ -1427,8 +1427,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/proxy"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/proxy"
 )
 
 func TestTLSConnection(t *testing.T) {
@@ -1666,8 +1666,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/proxy"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/proxy"
 )
 
 func TestProxyIntegration(t *testing.T) {

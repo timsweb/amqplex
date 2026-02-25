@@ -16,12 +16,12 @@ No new config fields. The endpoint is served on the existing health port (`Liste
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `amqproxy_active_clients` | gauge | Current number of connected clients |
-| `amqproxy_upstream_connections` | gauge | Total upstream connections (all credential sets) |
-| `amqproxy_upstream_reconnecting` | gauge | Upstream connections currently in reconnect loop |
-| `amqproxy_channels_used` | gauge | Total AMQP channels currently allocated |
-| `amqproxy_channels_pending_close` | gauge | Channels awaiting Channel.CloseOk from broker |
-| `amqproxy_upstream_reconnect_attempts_total` | counter | Cumulative upstream reconnect attempts since proxy start |
+| `amqplex_active_clients` | gauge | Current number of connected clients |
+| `amqplex_upstream_connections` | gauge | Total upstream connections (all credential sets) |
+| `amqplex_upstream_reconnecting` | gauge | Upstream connections currently in reconnect loop |
+| `amqplex_channels_used` | gauge | Total AMQP channels currently allocated |
+| `amqplex_channels_pending_close` | gauge | Channels awaiting Channel.CloseOk from broker |
+| `amqplex_upstream_reconnect_attempts_total` | counter | Cumulative upstream reconnect attempts since proxy start |
 
 All gauges are derived from existing struct state (no new fields). The counter requires one new `atomic.Int64` field (`reconnectTotal`) on `ManagedUpstream`, incremented each loop iteration in `reconnectLoop`.
 
@@ -47,12 +47,12 @@ reconnectTotal atomic.Int64 // incremented each reconnect attempt
 Format example:
 
 ```
-# HELP amqproxy_active_clients Current number of connected clients.
-# TYPE amqproxy_active_clients gauge
-amqproxy_active_clients 12
-# HELP amqproxy_upstream_connections Total upstream AMQP connections.
-# TYPE amqproxy_upstream_connections gauge
-amqproxy_upstream_connections 3
+# HELP amqplex_active_clients Current number of connected clients.
+# TYPE amqplex_active_clients gauge
+amqplex_active_clients 12
+# HELP amqplex_upstream_connections Total upstream AMQP connections.
+# TYPE amqplex_upstream_connections gauge
+amqplex_upstream_connections 3
 ...
 ```
 

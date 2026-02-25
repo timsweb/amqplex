@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-22
 **Features:** Connection pool reuse, upstream reconnection, graceful shutdown drain, heartbeat proxying
-**Inspired by:** [cloudamqp/amqproxy](https://github.com/cloudamqp/amqproxy) (Crystal)
+**Inspired by:** [cloudamqp/amqplex](https://github.com/cloudamqp/amqplex) (Crystal)
 
 ---
 

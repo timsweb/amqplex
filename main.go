@@ -101,7 +101,7 @@ func buildLogger() *slog.Logger {
 }
 
 func parseFlags(args []string) (string, string, error) {
-	flagSet := flag.NewFlagSet("amqproxy", flag.ContinueOnError)
+	flagSet := flag.NewFlagSet("amqplex", flag.ContinueOnError)
 	configPtr := flagSet.String("config", "", "Path to config file")
 
 	err := flagSet.Parse(args)

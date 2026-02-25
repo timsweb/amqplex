@@ -1318,7 +1318,7 @@ grep -r "pool\." --include="*.go" proxy/ tests/ main.go | grep -v "_test.go" | g
 
 In `proxy/connection.go`, remove:
 - `Pool *pool.ConnectionPool` field from `ClientConnection`
-- The `import "github.com/timsweb/amqproxy/pool"` if no longer needed
+- The `import "github.com/timsweb/amqplex/pool"` if no longer needed
 
 **Step 3: Update `proxy/connection.go` Handle() method**
 
@@ -1378,7 +1378,7 @@ Expected: no warnings.
 **Step 3: Build the binary**
 
 ```bash
-go build -o /tmp/amqproxy . && echo "build OK"
+go build -o /tmp/amqplex . && echo "build OK"
 ```
 
 **Step 4: Fix any failures found**

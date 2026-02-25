@@ -45,28 +45,28 @@ func (p *Proxy) MetricsHandler() http.Handler {
 
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
-		fmt.Fprintf(w, "# HELP amqproxy_active_clients Current number of connected clients.\n")
-		fmt.Fprintf(w, "# TYPE amqproxy_active_clients gauge\n")
-		fmt.Fprintf(w, "amqproxy_active_clients %d\n", activeClients)
+		fmt.Fprintf(w, "# HELP amqplex_active_clients Current number of connected clients.\n")
+		fmt.Fprintf(w, "# TYPE amqplex_active_clients gauge\n")
+		fmt.Fprintf(w, "amqplex_active_clients %d\n", activeClients)
 
-		fmt.Fprintf(w, "# HELP amqproxy_upstream_connections Total upstream AMQP connections.\n")
-		fmt.Fprintf(w, "# TYPE amqproxy_upstream_connections gauge\n")
-		fmt.Fprintf(w, "amqproxy_upstream_connections %d\n", upstreamTotal)
+		fmt.Fprintf(w, "# HELP amqplex_upstream_connections Total upstream AMQP connections.\n")
+		fmt.Fprintf(w, "# TYPE amqplex_upstream_connections gauge\n")
+		fmt.Fprintf(w, "amqplex_upstream_connections %d\n", upstreamTotal)
 
-		fmt.Fprintf(w, "# HELP amqproxy_upstream_reconnecting Upstream connections currently in reconnect loop.\n")
-		fmt.Fprintf(w, "# TYPE amqproxy_upstream_reconnecting gauge\n")
-		fmt.Fprintf(w, "amqproxy_upstream_reconnecting %d\n", upstreamReconnecting)
+		fmt.Fprintf(w, "# HELP amqplex_upstream_reconnecting Upstream connections currently in reconnect loop.\n")
+		fmt.Fprintf(w, "# TYPE amqplex_upstream_reconnecting gauge\n")
+		fmt.Fprintf(w, "amqplex_upstream_reconnecting %d\n", upstreamReconnecting)
 
-		fmt.Fprintf(w, "# HELP amqproxy_channels_used Total AMQP channels currently allocated.\n")
-		fmt.Fprintf(w, "# TYPE amqproxy_channels_used gauge\n")
-		fmt.Fprintf(w, "amqproxy_channels_used %d\n", channelsUsed)
+		fmt.Fprintf(w, "# HELP amqplex_channels_used Total AMQP channels currently allocated.\n")
+		fmt.Fprintf(w, "# TYPE amqplex_channels_used gauge\n")
+		fmt.Fprintf(w, "amqplex_channels_used %d\n", channelsUsed)
 
-		fmt.Fprintf(w, "# HELP amqproxy_channels_pending_close Channels awaiting Channel.CloseOk from broker.\n")
-		fmt.Fprintf(w, "# TYPE amqproxy_channels_pending_close gauge\n")
-		fmt.Fprintf(w, "amqproxy_channels_pending_close %d\n", channelsPendingClose)
+		fmt.Fprintf(w, "# HELP amqplex_channels_pending_close Channels awaiting Channel.CloseOk from broker.\n")
+		fmt.Fprintf(w, "# TYPE amqplex_channels_pending_close gauge\n")
+		fmt.Fprintf(w, "amqplex_channels_pending_close %d\n", channelsPendingClose)
 
-		fmt.Fprintf(w, "# HELP amqproxy_upstream_reconnect_attempts_total Cumulative upstream reconnect attempts since proxy start.\n")
-		fmt.Fprintf(w, "# TYPE amqproxy_upstream_reconnect_attempts_total counter\n")
-		fmt.Fprintf(w, "amqproxy_upstream_reconnect_attempts_total %d\n", reconnectAttempts)
+		fmt.Fprintf(w, "# HELP amqplex_upstream_reconnect_attempts_total Cumulative upstream reconnect attempts since proxy start.\n")
+		fmt.Fprintf(w, "# TYPE amqplex_upstream_reconnect_attempts_total counter\n")
+		fmt.Fprintf(w, "amqplex_upstream_reconnect_attempts_total %d\n", reconnectAttempts)
 	})
 }

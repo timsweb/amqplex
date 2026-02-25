@@ -50,10 +50,10 @@ func TestMetricsHandler(t *testing.T) {
 	assert.Contains(t, rec.Header().Get("Content-Type"), "text/plain")
 
 	body := rec.Body.String()
-	assert.Contains(t, body, "\namqproxy_active_clients 3\n")
-	assert.Contains(t, body, "\namqproxy_upstream_connections 2\n")
-	assert.Contains(t, body, "\namqproxy_upstream_reconnecting 1\n")
-	assert.Contains(t, body, "\namqproxy_channels_used 2\n")
-	assert.Contains(t, body, "\namqproxy_channels_pending_close 1\n")
-	assert.Contains(t, body, "\namqproxy_upstream_reconnect_attempts_total 7\n")
+	assert.Contains(t, body, "\namqplex_active_clients 3\n")
+	assert.Contains(t, body, "\namqplex_upstream_connections 2\n")
+	assert.Contains(t, body, "\namqplex_upstream_reconnecting 1\n")
+	assert.Contains(t, body, "\namqplex_channels_used 2\n")
+	assert.Contains(t, body, "\namqplex_channels_pending_close 1\n")
+	assert.Contains(t, body, "\namqplex_upstream_reconnect_attempts_total 7\n")
 }

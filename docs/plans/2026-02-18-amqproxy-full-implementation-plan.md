@@ -780,8 +780,8 @@ import (
 	"fmt"
 	"net"
 	"crypto/tls"
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/tlsutil"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/tlsutil"
 )
 
 type AMQPListener struct {
@@ -856,9 +856,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/pool"
-	"github.com/timsweb/amqproxy/tlsutil"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/pool"
+	"github.com/timsweb/amqplex/tlsutil"
 )
 
 type Proxy struct {
@@ -958,7 +958,7 @@ services:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./test_certs:/etc/rabbitmq/certs:ro
 
-  amqproxy:
+  amqplex:
     build: .
     ports:
       - "5673:5673"
@@ -1018,8 +1018,8 @@ import (
 	"testing"
 	"time"
 	"github.com/stretchr/testify/assert"
-	"github.com/timsweb/amqproxy/config"
-	"github.com/timsweb/amqproxy/proxy"
+	"github.com/timsweb/amqplex/config"
+	"github.com/timsweb/amqplex/proxy"
 )
 
 func TestTLSConnection(t *testing.T) {
@@ -1437,7 +1437,7 @@ git commit -m "test: add comprehensive integration tests"
 .PHONY: build test clean run
 
 build:
-	go build -o bin/amqproxy ./cmd/amqproxy
+	go build -o bin/amqplex ./cmd/amqplex
 
 test:
 	go test -v ./...
@@ -1452,7 +1452,7 @@ clean:
 	rm -rf bin/ test_certs/
 
 run:
-	go run ./cmd/amqproxy
+	go run ./cmd/amqplex
 
 docker-up:
 	docker-compose up --build
@@ -1464,7 +1464,7 @@ docker-down:
 **Step 2: Build binary**
 
 Run: `make build`
-Expected: Binary created at `bin/amqproxy`
+Expected: Binary created at `bin/amqplex`
 
 **Step 3: Run all tests**
 

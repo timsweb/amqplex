@@ -12,7 +12,7 @@ services:
       - ./test_certs:/etc/rabbitmq/certs:ro
       - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
 
-  amqproxy:
+  amqplex:
     build: .
     ports:
       - "5673:5673"

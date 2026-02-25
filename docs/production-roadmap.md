@@ -271,7 +271,7 @@ handshake_duration_seconds{vhost}
 
 ## References
 
-- Original code review plan: `docs/plans/2026-02-21-amqproxy-fixes.md`
+- Original code review plan: `docs/plans/2026-02-21-amqplex-fixes.md`
 - AMQP 0-9-1 specification: https://www.rabbitmq.com/resources/specs/amqp0-9-1.pdf
 - RabbitMQ production deployment guide: https://www.rabbitmq.com/production-checklist.html
 - Prometheus best practices: https://prometheus.io/docs/practices/
