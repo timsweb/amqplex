@@ -16,7 +16,12 @@
       "Bash(git:*)",
       "Bash(go version:*)",
       "Bash(tail:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(grep:*)",
+      "Bash(docker compose:*)"
     ]
   }
 }
