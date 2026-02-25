@@ -5,13 +5,13 @@ COPY go.mod go.sum* ./
 RUN go mod download
 
 COPY . .
-RUN go build -o amqproxy main.go
+RUN go build -o amqplex main.go
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
-COPY --from=builder /app/amqproxy .
+COPY --from=builder /app/amqplex .
 
 EXPOSE 5673 5674
-CMD ["./amqproxy"]
+CMD ["./amqplex"]
