@@ -1,0 +1,23 @@
+[
+  {
+    "proxy": "amqproxy",
+    "scenario": "high_concurrency",
+    "messages": 5378,
+    "duration": 6704230250,
+    "throughput_msg_per_sec": 802.1800862224264,
+    "cpu": {
+      "user_time_s": 0,
+      "system_time_s": 0,
+      "total_cpu_s": 0,
+      "cpu_percent": 0
+    },
+    "memory": {
+      "max_rss_kb": 22640,
+      "current_rss_kb": 22640,
+      "allocated_mb": 0,
+      "num_gc": 0,
+      "pause_total_ns": 0
+    },
+    "timestamp": "2026-02-25T22:38:19.49886Z"
+  }
+]

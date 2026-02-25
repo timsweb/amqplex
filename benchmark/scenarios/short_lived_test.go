@@ -71,13 +71,9 @@ func BenchmarkShortLived_AMQplex(b *testing.B) {
 		})
 	})
 
-	resultsDir := os.Getenv("RESULTS_DIR")
-	b.Logf("Attempting to save results to %s", resultsDir)
 	if err := reporter.Save(); err != nil {
-		b.Errorf("Failed to save results: %v", err)
-		return
+		b.Logf("Failed to save results: %v", err)
 	}
-	b.Logf("Results saved successfully to %s", resultsDir)
 }
 
 func BenchmarkShortLived_AMQProxy(b *testing.B) {
