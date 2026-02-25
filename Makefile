@@ -1,7 +1,13 @@
-.PHONY: build test clean run docker-up docker-down integration
+.PHONY: build release test clean run docker-up docker-down integration
 
 build:
-	go build -o bin/amqproxy ./main.go
+	go build -o bin/amqplex ./main.go
+
+release:
+	GOOS=linux  GOARCH=amd64 go build -o dist/amqplex-linux-amd64   ./main.go
+	GOOS=linux  GOARCH=arm64 go build -o dist/amqplex-linux-arm64   ./main.go
+	GOOS=darwin GOARCH=amd64 go build -o dist/amqplex-darwin-amd64  ./main.go
+	GOOS=darwin GOARCH=arm64 go build -o dist/amqplex-darwin-arm64  ./main.go
 
 test:
 	go test -v ./...
@@ -17,7 +23,7 @@ integration:
 	go test -tags integration -v -timeout 120s ./tests/ ; docker compose -f docker-compose.test.yml down
 
 clean:
-	rm -rf bin/ test_certs/
+	rm -rf bin/ dist/ test_certs/
 
 run:
 	go run ./main.go

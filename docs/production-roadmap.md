@@ -30,7 +30,7 @@
 - No tracing
 
 **Required Changes:**
-- [ ] Add metrics endpoint (Prometheus format):
+- [x] Add metrics endpoint (Prometheus format) ✅ DONE (2026-02-25):
   - `connections_active_total` {vhost, user}
   - `connections_rate` {vhost, user}
   - `channels_active_total` {vhost, user}
@@ -84,8 +84,8 @@
 - No memory/CPU limits
 
 **Required Changes:**
-- [ ] Add max concurrent clients per credential set (reject with 503 when exceeded)
-- [ ] Add global client connection limit
+- [x] Add max concurrent clients per credential set (reject with 503 when exceeded)
+- [x] Add global client connection limit
 - [ ] Implement backpressure on connection limit exceeded
 - [ ] Tests: Verify limits enforced under load
 
@@ -102,9 +102,9 @@
 - Over time (especially with reconnects), stale empty upstreams accumulate
 
 **Required Changes:**
-- [ ] Track last-used time on `ManagedUpstream`
-- [ ] Background goroutine (or on-demand check in `getOrCreateManagedUpstream`) removes empty upstreams idle > N seconds
-- [ ] Remove from `Proxy.upstreams` slice when empty
+- [x] Track last-used time on `ManagedUpstream`
+- [x] Background goroutine removes empty upstreams idle > N seconds
+- [x] Remove from `Proxy.upstreams` slice when empty
 - [ ] Tests: Verify idle upstreams are cleaned up
 
 **Impact:** MEDIUM - RabbitMQ connection leak over time
