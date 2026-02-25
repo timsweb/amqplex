@@ -56,9 +56,13 @@ func BenchmarkMixedSizes_AMQplex(b *testing.B) {
 		})
 	}
 
+	resultsDir := os.Getenv("RESULTS_DIR")
+	b.Logf("Attempting to save results to %s", resultsDir)
 	if err := reporter.Save(); err != nil {
-		b.Logf("Failed to save results: %v", err)
+		b.Errorf("Failed to save results: %v", err)
+		return
 	}
+	b.Logf("Results saved successfully to %s", resultsDir)
 }
 
 func BenchmarkMixedSizes_AMQProxy(b *testing.B) {
@@ -95,7 +99,11 @@ func BenchmarkMixedSizes_AMQProxy(b *testing.B) {
 		})
 	}
 
+	resultsDir := os.Getenv("RESULTS_DIR")
+	b.Logf("Attempting to save results to %s", resultsDir)
 	if err := reporter.Save(); err != nil {
-		b.Logf("Failed to save results: %v", err)
+		b.Errorf("Failed to save results: %v", err)
+		return
 	}
+	b.Logf("Results saved successfully to %s", resultsDir)
 }
