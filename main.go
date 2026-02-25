@@ -57,7 +57,7 @@ func main() {
 
 	// Start health/metrics server
 	go func() {
-		addr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort+1)
+		addr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.AdminPort)
 		mux := http.NewServeMux()
 		mux.Handle("/", health.NewHealthHandler())
 		mux.Handle("/metrics", p.MetricsHandler())

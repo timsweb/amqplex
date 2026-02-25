@@ -28,8 +28,9 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 
 // stubClient implements clientWriter for tests.
 type stubClient struct {
-	frames    []*Frame
-	delivered chan struct{} // signalled when DeliverFrame is called
+	frames         []*Frame
+	delivered      chan struct{} // signalled when DeliverFrame is called
+	closedChannels []uint16     // records OnChannelClosed calls
 }
 
 func newStubClient() *stubClient {
@@ -47,7 +48,9 @@ func (s *stubClient) DeliverFrame(f *Frame) error {
 	return nil
 }
 func (s *stubClient) Abort() {}
-func (s *stubClient) OnChannelClosed(_ uint16) {}
+func (s *stubClient) OnChannelClosed(clientChanID uint16) {
+	s.closedChannels = append(s.closedChannels, clientChanID)
+}
 
 func TestAllocateChannel_AssignsLowestFreeID(t *testing.T) {
 	m := newTestManagedUpstream(65535)
@@ -418,4 +421,101 @@ func TestManagedUpstreamLogsReconnect(t *testing.T) {
 	assert.True(t, lc.waitForMessage("upstream lost", 500*time.Millisecond))
 	assert.True(t, lc.waitForMessage("upstream reconnecting", 500*time.Millisecond))
 	assert.True(t, lc.waitForMessage("upstream reconnected", 500*time.Millisecond))
+}
+
+// TestReadLoop_ClientInitiatedCloseOkDelivered is the regression test for the
+// bug where Channel.CloseOk was silently dropped after a client-initiated
+// Channel.Close. The fix requires that:
+//   - the client receives Channel.CloseOk (so it can proceed / disconnect cleanly)
+//   - channelOwners and usedChannels are cleaned up afterward
+//   - OnChannelClosed is called so the client-side mapping is removed
+func TestReadLoop_ClientInitiatedCloseOkDelivered(t *testing.T) {
+	m, server := startedUpstream(t)
+	stub := newStubClient()
+
+	// Simulate: channel 3 (upstream) is owned by stub with client-side channel 1.
+	// ClientChannels has already been cleared (as handleConnection does when it
+	// forwards Channel.Close), but channelOwners is still present.
+	m.mu.Lock()
+	m.usedChannels[3] = true
+	m.channelOwners[3] = channelEntry{owner: stub, clientChanID: 1}
+	m.clients = append(m.clients, stub)
+	m.mu.Unlock()
+
+	// Upstream sends Channel.CloseOk on channel 3 (class=20, method=41).
+	closeOkPayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 41})
+	w := bufio.NewWriter(server)
+	require.NoError(t, WriteFrame(w, &Frame{
+		Type:    FrameTypeMethod,
+		Channel: 3,
+		Payload: closeOkPayload,
+	}))
+	require.NoError(t, w.Flush())
+
+	// Client must receive the CloseOk, remapped to its client-side channel ID.
+	select {
+	case <-stub.delivered:
+	case <-time.After(time.Second):
+		t.Fatal("timeout: Channel.CloseOk was not delivered to client")
+	}
+	require.Len(t, stub.frames, 1, "client should receive exactly one frame")
+	assert.Equal(t, uint16(1), stub.frames[0].Channel, "frame must be remapped to client channel 1")
+	assert.True(t, isChannelCloseOk(stub.frames[0]), "frame must be Channel.CloseOk")
+
+	// Channel slot must be freed so it can be reallocated.
+	m.mu.Lock()
+	_, stillUsed := m.usedChannels[3]
+	_, stillOwned := m.channelOwners[3]
+	m.mu.Unlock()
+	assert.False(t, stillUsed, "usedChannels[3] must be cleared after CloseOk")
+	assert.False(t, stillOwned, "channelOwners[3] must be cleared after CloseOk")
+
+	// OnChannelClosed must have been called so the client unmaps its side.
+	assert.Equal(t, []uint16{1}, stub.closedChannels, "OnChannelClosed must be called with client channel ID 1")
+}
+
+// TestReadLoop_PendingCloseOkDiscarded ensures that Channel.CloseOk for a
+// proxy-initiated close (pendingClose) is still silently discarded and NOT
+// forwarded to any client (original behaviour, must remain intact).
+func TestReadLoop_PendingCloseOkDiscarded(t *testing.T) {
+	m, server := startedUpstream(t)
+	stub := newStubClient()
+
+	m.mu.Lock()
+	m.usedChannels[7] = true
+	m.pendingClose[7] = true
+	// No entry in channelOwners — proxy-initiated close has no owner to route to.
+	m.clients = append(m.clients, stub)
+	m.mu.Unlock()
+
+	closeOkPayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 41})
+	w := bufio.NewWriter(server)
+	require.NoError(t, WriteFrame(w, &Frame{
+		Type:    FrameTypeMethod,
+		Channel: 7,
+		Payload: closeOkPayload,
+	}))
+	require.NoError(t, w.Flush())
+
+	// Send a subsequent heartbeat so we know readLoop processed the CloseOk first.
+	require.NoError(t, WriteFrame(w, &Frame{Type: FrameTypeHeartbeat, Channel: 0, Payload: []byte{}}))
+	require.NoError(t, w.Flush())
+
+	// Wait for the heartbeat echo to confirm readLoop ran past the CloseOk.
+	r := bufio.NewReader(server)
+	server.SetReadDeadline(time.Now().Add(time.Second))
+	echo, err := ParseFrame(r)
+	require.NoError(t, err)
+	assert.Equal(t, FrameTypeHeartbeat, echo.Type)
+
+	// The stub must not have received any frame.
+	assert.Empty(t, stub.frames, "proxy-initiated CloseOk must not be forwarded to clients")
+
+	// Channel slot must be freed.
+	m.mu.Lock()
+	_, stillUsed := m.usedChannels[7]
+	_, stillPending := m.pendingClose[7]
+	m.mu.Unlock()
+	assert.False(t, stillUsed, "usedChannels[7] must be cleared")
+	assert.False(t, stillPending, "pendingClose[7] must be cleared")
 }

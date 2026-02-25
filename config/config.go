@@ -10,6 +10,7 @@ import (
 type Config struct {
 	ListenAddress          string
 	ListenPort             int
+	AdminPort              int // health + metrics HTTP port; default 9099
 	PoolIdleTimeout        int
 	PoolMaxChannels        int
 	MaxUpstreamConnections int // 0 = unlimited
@@ -32,6 +33,7 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 	// Set defaults
 	v.SetDefault("listen.address", "0.0.0.0")
 	v.SetDefault("listen.port", 5673)
+	v.SetDefault("listen.admin_port", 9099)
 	v.SetDefault("pool.idle_timeout", 5)
 	v.SetDefault("pool.max_channels", 65535)
 	v.SetDefault("pool.max_upstream_connections", 0)
@@ -44,12 +46,19 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 		v.AutomaticEnv()
 	}
 
-	// Load config file if provided
+	// Load config file: explicit path > ./config.toml > /etc/amqplex/config.toml
 	if configPath != "" {
 		v.SetConfigFile(configPath)
 		if err := v.ReadInConfig(); err != nil {
 			return nil, fmt.Errorf("failed to read config: %w", err)
 		}
+	} else {
+		v.SetConfigName("config")
+		v.SetConfigType("toml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("/etc/amqplex")
+		// Ignore "not found" — env vars and defaults are sufficient.
+		_ = v.ReadInConfig()
 	}
 
 	// Map env vars to config keys
@@ -58,6 +67,7 @@ func LoadConfig(configPath string, envPrefix string) (*Config, error) {
 	cfg := &Config{
 		ListenAddress:          v.GetString("listen.address"),
 		ListenPort:             v.GetInt("listen.port"),
+		AdminPort:              v.GetInt("listen.admin_port"),
 		PoolIdleTimeout:        v.GetInt("pool.idle_timeout"),
 		PoolMaxChannels:        v.GetInt("pool.max_channels"),
 		MaxUpstreamConnections: v.GetInt("pool.max_upstream_connections"),

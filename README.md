@@ -32,10 +32,13 @@ make build
 
 Config file (TOML) or environment variables (prefix `AMQP_`, dots replaced with underscores).
 
+If `--config` is not provided, amqplex looks for `config.toml` in the current directory, then `/etc/amqplex/config.toml`. If neither exists it starts with defaults and environment variables.
+
 | Key | Env | Default | Description |
 |-----|-----|---------|-------------|
 | `listen.address` | `AMQP_LISTEN_ADDRESS` | `0.0.0.0` | Listen address |
-| `listen.port` | `AMQP_LISTEN_PORT` | `5673` | AMQP listen port (health/metrics on port+1) |
+| `listen.port` | `AMQP_LISTEN_PORT` | `5673` | AMQP listen port |
+| `listen.admin_port` | `AMQP_LISTEN_ADMIN_PORT` | `9099` | Health + metrics HTTP port |
 | `upstream.url` | `AMQP_UPSTREAM_URL` | — | Upstream RabbitMQ URL (`amqp://` or `amqps://`) |
 | `pool.max_channels` | `AMQP_POOL_MAX_CHANNELS` | `65535` | Max channels per upstream connection |
 | `pool.idle_timeout` | `AMQP_POOL_IDLE_TIMEOUT` | `5` | Seconds before an idle upstream is closed |
@@ -71,7 +74,7 @@ client_key  = "/etc/ssl/private/amqplex-client-key.pem"
 
 ## Metrics
 
-Available at `http://<host>:<port+1>/metrics` in Prometheus text format.
+Available at `http://<host>:<admin_port>/metrics` in Prometheus text format (default port `9099`).
 
 | Metric | Type | Description |
 |--------|------|-------------|
