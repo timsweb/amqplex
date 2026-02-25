@@ -1,6 +1,6 @@
 # AMQPlex
 
-High-performance AMQP multipler with connection/channel pooling and runtime certificate loading.
+High-performance AMQP multiplexer with connection/channel pooling and runtime certificate loading.
 
 ## Features
 - Connection pooling per credential set
