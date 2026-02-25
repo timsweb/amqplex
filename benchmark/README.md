@@ -2,30 +2,51 @@
 
 This benchmark suite compares AMQplex and cloudamqp/amqproxy performance.
 
-## Running Benchmarks
+## Quick Start
 
 ```bash
-# Start RabbitMQ and proxies
-docker compose -f benchmark/docker-compose.benchmark.yml up -d
+# Run all benchmarks (starts infrastructure, runs benchmarks, tears down)
+make benchmark-all
 
-# Run all benchmarks
-go test -bench=. -benchmem -benchtime=10s -run=^$ ./benchmark/scenarios/...
-
-# Run specific benchmark scenarios
-go test -bench=BenchmarkShortLived -benchtime=10s -run=^$ ./benchmark/scenarios/...
-go test -bench=BenchmarkHighConcurrency -benchtime=10s -run=^$ ./benchmark/scenarios/...
-go test -bench=BenchmarkMixedSizes -benchtime=10s -run=^$ ./benchmark/scenarios/...
-
-# Stop services
-docker compose -f benchmark/docker-compose.benchmark.yml down
+# View comparison of saved results
+make benchmark-compare
 ```
 
-## Results
+## Detailed Usage
 
-Results are saved to `benchmark/results/` in JSON format for comparison.
+### Running Specific Benchmarks
 
-## Scenarios
+```bash
+# Setup infrastructure only
+make benchmark-setup
 
-1. **Short-lived connections**: Open/close connection per message (PHP-style workload)
-2. **High concurrency**: Many simultaneous client connections
-3. **Mixed message sizes**: Small (1KB), medium (10KB), large (100KB) messages
+# Run specific scenarios
+make benchmark-short-lived
+make benchmark-high-concurrency
+make benchmark-mixed-sizes
+
+# Cleanup when done
+make benchmark-teardown
+```
+
+### Understanding Results
+
+Results are saved to `benchmark/results/` in JSON format. Each result includes:
+- **messages**: Total messages sent
+- **duration**: Total benchmark duration
+- **throughput_msg_per_sec**: Messages per second
+- **cpu.cpu_percent**: Average CPU usage of proxy container
+- **memory.current_rss_kb**: Memory usage in KB
+
+### Scenarios
+
+1. **Short-lived connections**: One connection opened and closed per message — models PHP-style workloads where the proxy's connection pooling provides the most benefit.
+2. **High concurrency**: 10× parallelism factor, each goroutine opens its own connection. Tests how well each proxy handles concurrent connection load.
+3. **Mixed message sizes**: Small (1KB), medium (10KB), large (100KB) — shows throughput impact of frame size.
+
+### Troubleshooting
+
+If benchmarks fail:
+1. Ensure Docker is running: `docker ps`
+2. Check services are healthy: `docker compose -f benchmark/docker-compose.benchmark.yml ps`
+3. View logs: `docker compose -f benchmark/docker-compose.benchmark.yml logs <service>`
