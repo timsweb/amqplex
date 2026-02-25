@@ -113,6 +113,13 @@ func (cc *ClientConnection) Abort() {
 	}
 }
 
+// OnChannelClosed is called by ManagedUpstream.readLoop after delivering
+// Channel.CloseOk for a client-initiated close. Removes the channel mapping
+// so releaseClientChannels does not attempt to close it a second time.
+func (cc *ClientConnection) OnChannelClosed(clientChanID uint16) {
+	cc.UnmapChannel(clientChanID)
+}
+
 func (cc *ClientConnection) Handle() error {
 	cc.Reader = bufio.NewReader(cc.Conn)
 	cc.Writer = bufio.NewWriter(cc.Conn)
@@ -233,7 +240,7 @@ func serializeConnectionStart() []byte {
 	payload = append(payload, 0)                                       // version-major = 0
 	payload = append(payload, 9)                                       // version-minor = 9
 	payload = append(payload, serializeEmptyTable()...)                // server-properties (empty table)
-	payload = append(payload, serializeLongString([]byte("PLAIN"))...) // mechanisms
+	payload = append(payload, serializeLongString([]byte("AMQPLAIN PLAIN"))...) // mechanisms
 	payload = append(payload, serializeLongString([]byte("en_US"))...) // locales
 
 	return append(header, payload...)

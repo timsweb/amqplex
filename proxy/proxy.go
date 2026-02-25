@@ -236,14 +236,26 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 	// Read and validate AMQP protocol header.
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(clientConn, header); err != nil {
+		p.logger.Warn("failed to read protocol header",
+			slog.String("remote_addr", clientConn.RemoteAddr().String()),
+			slog.String("error", err.Error()),
+		)
 		return
 	}
 	if string(header) != ProtocolHeader {
+		p.logger.Warn("invalid protocol header",
+			slog.String("remote_addr", clientConn.RemoteAddr().String()),
+			slog.String("header", fmt.Sprintf("%x", header)),
+		)
 		return
 	}
 
 	// Client-side handshake: extracts credentials and vhost.
 	if err := cc.Handle(); err != nil {
+		p.logger.Warn("client handshake failed",
+			slog.String("remote_addr", clientConn.RemoteAddr().String()),
+			slog.String("error", err.Error()),
+		)
 		return
 	}
 
@@ -362,11 +374,13 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		}
 
 		if isChannelClose(frame) {
-			cc.Mu.RLock()
-			upstreamID := cc.ChannelMapping[frame.Channel]
-			cc.Mu.RUnlock()
-			managed.ReleaseChannel(upstreamID)
-			cc.UnmapChannel(frame.Channel)
+			// Remove from ClientChannels so releaseClientChannels won't send
+			// Channel.Close again if the client disconnects before CloseOk arrives.
+			// Keep ChannelMapping intact so readLoop can route Channel.CloseOk back
+			// to this client; OnChannelClosed will clean up the mapping after delivery.
+			cc.Mu.Lock()
+			delete(cc.ClientChannels, frame.Channel)
+			cc.Mu.Unlock()
 		}
 	}
 }

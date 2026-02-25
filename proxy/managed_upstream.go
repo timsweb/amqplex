@@ -13,6 +13,10 @@ import (
 type clientWriter interface {
 	DeliverFrame(frame *Frame) error
 	Abort()
+	// OnChannelClosed is called by readLoop after delivering Channel.CloseOk for a
+	// client-initiated close. It removes the client-side channel mapping so the slot
+	// is not double-closed by releaseClientChannels on disconnect.
+	OnChannelClosed(clientChanID uint16)
 }
 
 // channelEntry binds an upstream channel ID to the client that owns it and
@@ -217,17 +221,29 @@ func (m *ManagedUpstream) readLoop() {
 			}
 
 		default:
-			// If this is Channel.CloseOk for a proxy-initiated close, release the
-			// slot and discard the frame — don't forward to any client.
 			if isChannelCloseOk(frame) {
 				m.mu.Lock()
 				if m.pendingClose[frame.Channel] {
+					// Proxy-initiated close: discard, just release slot.
 					delete(m.pendingClose, frame.Channel)
 					delete(m.usedChannels, frame.Channel)
 					m.mu.Unlock()
 					continue
 				}
+				// Client-initiated close: deliver CloseOk to the client, then clean up.
+				entry, ok := m.channelOwners[frame.Channel]
+				if ok {
+					delete(m.channelOwners, frame.Channel)
+					delete(m.usedChannels, frame.Channel)
+				}
 				m.mu.Unlock()
+				if ok {
+					remapped := *frame
+					remapped.Channel = entry.clientChanID
+					_ = entry.owner.DeliverFrame(&remapped)
+					entry.owner.OnChannelClosed(entry.clientChanID)
+				}
+				continue
 			}
 			// Remap channel and dispatch to the owning client.
 			m.mu.Lock()

@@ -47,6 +47,7 @@ func (s *stubClient) DeliverFrame(f *Frame) error {
 	return nil
 }
 func (s *stubClient) Abort() {}
+func (s *stubClient) OnChannelClosed(_ uint16) {}
 
 func TestAllocateChannel_AssignsLowestFreeID(t *testing.T) {
 	m := newTestManagedUpstream(65535)
