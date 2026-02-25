@@ -26,9 +26,8 @@ benchmark-setup:
 	@echo "Starting benchmark infrastructure..."
 	docker compose -f benchmark/docker-compose.benchmark.yml up -d
 	@echo "Waiting for services to be healthy..."
-	@docker compose -f benchmark/docker-compose.benchmark.yml wait rabbitmq amqplex amqproxy || \
-		docker compose -f benchmark/docker-compose.benchmark.yml ps
-	@echo "Services ready."
+	@sleep 10
+	@docker compose -f benchmark/docker-compose.benchmark.yml ps
 
 benchmark-teardown:
 	@echo "Stopping benchmark infrastructure..."
