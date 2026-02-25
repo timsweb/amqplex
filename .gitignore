@@ -3,3 +3,7 @@
 bin/
 dist/
 test_certs/
+
+# Benchmark results
+benchmark/results/*.json
+!benchmark/results/.gitkeep
