@@ -1,0 +1,53 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: amqplex
+    main: ./main.go
+    binary: amqplex
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: amqplex
+    builds:
+      - amqplex
+    name_template: "amqplex_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^Merge"
+  groups:
+    - title: "Bug Fixes"
+      regexp: "^fix"
+      order: 0
+    - title: "Features"
+      regexp: "^feat"
+      order: 1
+    - title: "Other"
+      order: 999
