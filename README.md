@@ -1,5 +1,7 @@
 # AMQPlex
 
+> **Experimental:** AMQPlex is under active development and not yet recommended for mission-critical production deployments. APIs and configuration may change between releases.
+
 High-performance AMQP 0-9-1 multiplexer. Multiplexes many short-lived client connections onto a small pool of long-lived upstream connections, reducing connection churn on RabbitMQ — especially useful for PHP and other stateless request-per-process workloads.
 
 ## Features
@@ -79,6 +81,10 @@ Available at `http://<host>:<port+1>/metrics` in Prometheus text format.
 | `amqplex_channels_used` | gauge | AMQP channels currently allocated |
 | `amqplex_channels_pending_close` | gauge | Channels awaiting CloseOk from broker |
 | `amqplex_upstream_reconnect_attempts_total` | counter | Cumulative reconnect attempts |
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ## Development
 
