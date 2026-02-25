@@ -1,0 +1,42 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit loopback_users []
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  amqplex:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "5673:5673"
+    environment:
+      AMQP_UPSTREAM_URL: amqp://rabbitmq:5672
+      AMQP_LISTEN_PORT: 5673
+      AMQP_POOL_MAX_CHANNELS: 65535
+      AMQP_POOL_IDLE_TIMEOUT: 5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  amqproxy:
+    image: cloudamqp/amqproxy:latest
+    ports:
+      - "5674:5673"
+    environment:
+      LISTEN_ADDRESS: 0.0.0.0
+      LISTEN_PORT: 5673
+      IDLE_CONNECTION_TIMEOUT: 5
+      MAX_UPSTREAM_CHANNELS: 65535
+      AMQP_URL: amqp://rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
