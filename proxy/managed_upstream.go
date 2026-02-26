@@ -140,6 +140,24 @@ func (m *ManagedUpstream) ScheduleChannelClose(upstreamChanID uint16) {
 	delete(m.channelOwners, upstreamChanID)
 }
 
+// ScheduleChannelCloseIfOpen marks an upstream channel as pending close only if
+// it is still recorded as open in usedChannels. This is used when the client has
+// already sent Channel.Close but the proxy has not yet received Channel.CloseOk
+// from the broker — the slot must stay reserved until CloseOk arrives to prevent
+// a new Channel.Open from reaching the broker while the previous close is still
+// in flight (which causes a 504 CHANNEL_ERROR).
+//
+// If usedChannels[id] is already false the broker's CloseOk has been processed
+// and the channel is genuinely free; nothing is done in that case.
+func (m *ManagedUpstream) ScheduleChannelCloseIfOpen(upstreamChanID uint16) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.usedChannels[upstreamChanID] {
+		m.pendingClose[upstreamChanID] = true
+		delete(m.channelOwners, upstreamChanID)
+	}
+}
+
 // HasCapacity reports whether this upstream has at least one free channel slot.
 func (m *ManagedUpstream) HasCapacity() bool {
 	m.mu.Lock()

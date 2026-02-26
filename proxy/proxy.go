@@ -417,7 +417,14 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 			})
 			managed.ScheduleChannelClose(upstreamID)
 		} else {
-			managed.ReleaseChannel(upstreamID)
+			// The client already sent Channel.Close but we have not yet received
+			// Channel.CloseOk from the broker. Releasing the slot immediately would
+			// allow a new client to open the same upstream channel number before the
+			// broker finishes the close handshake, causing a 504 CHANNEL_ERROR.
+			// ScheduleChannelCloseIfOpen holds the slot in pendingClose until CloseOk
+			// arrives. If CloseOk already arrived (usedChannels[id] == false) the
+			// channel is genuinely free and nothing needs to be done.
+			managed.ScheduleChannelCloseIfOpen(upstreamID)
 		}
 		cc.UnmapChannel(clientID)
 	}
