@@ -365,9 +365,7 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		// Mark channel unsafe if needed.
 		markChannelSafety(frame, cc)
 
-		if err := managed.writeFrameToUpstream(&remapped); err != nil {
-			return
-		}
+		managed.writeFrameToUpstream(&remapped)
 
 		if isChannelClose(frame) {
 			// Remove from ClientChannels so releaseClientChannels won't send
@@ -406,7 +404,7 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 			closePayload = append(closePayload, 0, 0)                        // reply-code = 0
 			closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
 			closePayload = append(closePayload, 0, 0, 0, 0)                  // class-id=0, method-id=0
-			_ = managed.writeFrameToUpstream(&Frame{
+			managed.writeFrameToUpstream(&Frame{
 				Type:    FrameTypeMethod,
 				Channel: upstreamID,
 				Payload: closePayload,
@@ -483,6 +481,7 @@ func (p *Proxy) Stop() error {
 	for _, upstreams := range p.upstreams {
 		for _, m := range upstreams {
 			m.stopped.Store(true)
+			m.stopWritePump()
 			m.AbortAllClients() // abort client connections so handleConnection exits
 			m.mu.Lock()
 			if m.conn != nil {
