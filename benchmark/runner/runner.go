@@ -51,14 +51,20 @@ func NewRunner(proxyURL, containerName string, proxyType metrics.ProxyType, repo
 }
 
 func (r *BenchmarkRunner) RunScenario(b *testing.B, scenarioName string, messagesPerOp int, messageSize int, callback func(conn *amqp091.Connection) error) {
+	// Warmup: establish the upstream connection before measurement starts so
+	// the first timed iteration doesn't pay the extra cost of dialling RabbitMQ.
+	if conn, err := amqp091.Dial(r.ProxyURL); err == nil {
+		conn.Close()
+	}
+
 	b.ResetTimer()
 
 	var totalMessages atomic.Int64
-	startTime := time.Now()
 
 	cpuBefore, _ := metrics.GetCPUUsage(r.containerName)
 	memBefore, _ := metrics.GetMemoryUsage(r.containerName)
 
+	startTime := time.Now()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			type opResult struct{ err error }
