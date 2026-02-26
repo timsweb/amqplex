@@ -1,14 +1,18 @@
 package metrics
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func GetCPUUsage(containerName string) (*CPUStats, error) {
 	// Get CPU stats from docker stats (requires docker CLI)
-	cmd := exec.Command("docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}", containerName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}", containerName)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err

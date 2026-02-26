@@ -112,7 +112,10 @@ func isClosedError(err error) bool {
 }
 
 func (p *Proxy) getPoolKey(username, password, vhost string) string {
-	return username + ":" + password + ":" + vhost
+	return fmt.Sprintf("%d\x00%s\x00%d\x00%s\x00%d\x00%s",
+		len(username), username,
+		len(password), password,
+		len(vhost), vhost)
 }
 
 func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*ManagedUpstream, error) {

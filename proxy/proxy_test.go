@@ -423,3 +423,10 @@ func TestGetPoolKey_DifferentCredsProduceDifferentKeys(t *testing.T) {
 	assert.NotEqual(t, p.getPoolKey("a", "b", "/"), p.getPoolKey("x", "b", "/"))
 	assert.NotEqual(t, p.getPoolKey("aaa", "bbb", "/"), p.getPoolKey("aa", "abbb", "/"))
 }
+
+func TestGetPoolKey_SeparatorInFieldDoesNotCollide(t *testing.T) {
+	p := &Proxy{}
+	// Credentials containing the separator character must not collide.
+	assert.NotEqual(t, p.getPoolKey("a:b", "c", "/"), p.getPoolKey("a", "b:c", "/"))
+	assert.NotEqual(t, p.getPoolKey(":::", ":::", ""), p.getPoolKey("::", "::::", ""))
+}

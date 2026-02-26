@@ -1,14 +1,18 @@
 package metrics
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func GetMemoryUsage(containerName string) (*MemoryStats, error) {
 	// Get memory stats from docker stats
-	cmd := exec.Command("docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", containerName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", containerName)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err

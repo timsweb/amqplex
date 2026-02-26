@@ -429,9 +429,9 @@ func (m *ManagedUpstream) reconnectLoop() {
 		m.nextHint = 1
 		m.clients = make([]clientWriter, 0)
 		m.lastEmptyTime = time.Now() // no clients yet after reconnect
-		// Reset pump state for the new connection.
-		m.writeDone = make(chan struct{})
-		m.doneOnce = sync.Once{}
+		// writeDone and doneOnce are NOT reset: writeDone is created once at
+		// construction and reused across reconnects. The old pump already exited
+		// on write error; the new pump below reuses the same done channel.
 		m.mu.Unlock()
 
 		// Drain stale frames queued before failure (all old clients were aborted).
