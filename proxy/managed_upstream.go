@@ -36,15 +36,18 @@ type ManagedUpstream struct {
 	dialFn        func() (*UpstreamConn, error)
 	reconnectBase time.Duration // base backoff for reconnect; defaults to 500ms
 
-	mu               sync.Mutex
-	conn             *UpstreamConn
-	usedChannels     map[uint16]bool
-	channelOwners    map[uint16]channelEntry
-	pendingClose     map[uint16]bool // channels awaiting CloseOk; slot held until CloseOk arrives
-	nextHint         uint16          // next channel ID to try; protected by mu
-	clients          []clientWriter
-	lastEmptyTime    time.Time  // protected by mu; zero when clients > 0
-	upstreamWriterMu sync.Mutex // serialises all writes to conn.Writer
+	mu            sync.Mutex
+	conn          *UpstreamConn
+	usedChannels  map[uint16]bool
+	channelOwners map[uint16]channelEntry
+	pendingClose  map[uint16]bool // channels awaiting CloseOk; slot held until CloseOk arrives
+	nextHint      uint16          // next channel ID to try; protected by mu
+	clients       []clientWriter
+	lastEmptyTime time.Time // protected by mu; zero when clients > 0
+
+	writeCh   chan *Frame   // write pump input; buffered
+	writeDone chan struct{} // closed to stop the pump goroutine
+	doneOnce  sync.Once     // ensures writeDone is closed exactly once
 
 	stopped        atomic.Bool
 	reconnectTotal atomic.Int64 // cumulative reconnect attempts since start
@@ -180,20 +183,66 @@ func (m *ManagedUpstream) Deregister(cw clientWriter) {
 	}
 }
 
-// writeFrameToUpstream serialises writes to the upstream connection.
-func (m *ManagedUpstream) writeFrameToUpstream(frame *Frame) error {
-	m.upstreamWriterMu.Lock()
-	defer m.upstreamWriterMu.Unlock()
-	m.mu.Lock()
-	conn := m.conn
-	m.mu.Unlock()
-	if conn == nil {
-		return nil
+// writeFrameToUpstream enqueues a frame for the write pump.
+// Returns immediately; the pump handles serialisation and flushing.
+// No-ops if the upstream is stopped.
+func (m *ManagedUpstream) writeFrameToUpstream(frame *Frame) {
+	if m.stopped.Load() {
+		return
 	}
-	if err := WriteFrame(conn.Writer, frame); err != nil {
-		return err
+	select {
+	case m.writeCh <- frame:
+	case <-m.writeDone:
 	}
-	return conn.Writer.Flush()
+}
+
+// writePump is the sole writer to conn.Writer. It reads frames from writeCh,
+// batches any frames that are already queued, then flushes once per batch.
+// It exits on write error (calling handleUpstreamFailure) or when writeDone
+// is closed (clean shutdown / idle expiry).
+func (m *ManagedUpstream) writePump(conn *UpstreamConn) {
+	for {
+		var frame *Frame
+		select {
+		case frame = <-m.writeCh:
+		case <-m.writeDone:
+			return
+		}
+
+		if err := WriteFrame(conn.Writer, frame); err != nil {
+			if !m.stopped.Load() {
+				m.handleUpstreamFailure(err)
+			}
+			return
+		}
+
+		// Drain any frames already queued (batch flush).
+		draining := true
+		for draining {
+			select {
+			case next := <-m.writeCh:
+				if err := WriteFrame(conn.Writer, next); err != nil {
+					if !m.stopped.Load() {
+						m.handleUpstreamFailure(err)
+					}
+					return
+				}
+			default:
+				draining = false
+			}
+		}
+
+		if err := conn.Writer.Flush(); err != nil {
+			if !m.stopped.Load() {
+				m.handleUpstreamFailure(err)
+			}
+			return
+		}
+	}
+}
+
+func (m *ManagedUpstream) stopWritePump() {
+	m.doneOnce.Do(func() { close(m.writeDone) })
 }
 
 // Start sets the upstream connection and launches the read loop goroutine.
@@ -202,6 +251,7 @@ func (m *ManagedUpstream) Start(conn *UpstreamConn) {
 	m.mu.Lock()
 	m.conn = conn
 	m.mu.Unlock()
+	go m.writePump(conn) // pass conn directly; pump owns it for writing
 	go m.readLoop()
 	if m.logger != nil {
 		m.logger.Info("upstream connected",
@@ -233,7 +283,7 @@ func (m *ManagedUpstream) readLoop() {
 		case frame.Type == FrameTypeHeartbeat:
 			// Echo heartbeat back to upstream; do not forward to clients.
 			hb := &Frame{Type: FrameTypeHeartbeat, Channel: 0, Payload: []byte{}}
-			_ = m.writeFrameToUpstream(hb)
+			m.writeFrameToUpstream(hb)
 
 		case frame.Channel == 0:
 			// Connection-level frame (e.g. Connection.Close from upstream).
@@ -327,6 +377,7 @@ func (m *ManagedUpstream) markStoppedIfIdle(timeout time.Duration) bool {
 		return false
 	}
 	m.stopped.Store(true)
+	m.stopWritePump()
 	if m.conn != nil {
 		m.conn.Conn.Close()
 		m.conn = nil
@@ -378,8 +429,17 @@ func (m *ManagedUpstream) reconnectLoop() {
 		m.nextHint = 1
 		m.clients = make([]clientWriter, 0)
 		m.lastEmptyTime = time.Now() // no clients yet after reconnect
+		// Reset pump state for the new connection.
+		m.writeDone = make(chan struct{})
+		m.doneOnce = sync.Once{}
 		m.mu.Unlock()
 
+		// Drain stale frames queued before failure (all old clients were aborted).
+		for len(m.writeCh) > 0 {
+			<-m.writeCh
+		}
+
+		go m.writePump(conn)
 		go m.readLoop()
 		if m.logger != nil {
 			m.logger.Info("upstream reconnected",

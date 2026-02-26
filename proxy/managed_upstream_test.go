@@ -23,6 +23,8 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 		channelOwners: make(map[uint16]channelEntry),
 		pendingClose:  make(map[uint16]bool),
 		clients:       make([]clientWriter, 0),
+		writeCh:       make(chan *Frame, 256),
+		writeDone:     make(chan struct{}),
 		dialFn:        func() (*UpstreamConn, error) { return nil, errors.New("no dial fn") },
 	}
 }
@@ -281,6 +283,8 @@ func TestManagedUpstreamLogsConnected(t *testing.T) {
 		clients:       make([]clientWriter, 0),
 		upstreamAddr:  "localhost:5672",
 		logger:        logger,
+		writeCh:       make(chan *Frame, 256),
+		writeDone:     make(chan struct{}),
 	}
 	m.dialFn = func() (*UpstreamConn, error) { return nil, nil }
 
@@ -307,6 +311,8 @@ func TestAllocateReleaseChannelLogged(t *testing.T) {
 		clients:       make([]clientWriter, 0),
 		logger:        logger,
 		upstreamAddr:  "localhost:5672",
+		writeCh:       make(chan *Frame, 256),
+		writeDone:     make(chan struct{}),
 	}
 
 	client := newStubClient()
@@ -404,6 +410,8 @@ func TestManagedUpstreamLogsReconnect(t *testing.T) {
 		reconnectBase: 10 * time.Millisecond,
 		upstreamAddr:  "localhost:5672",
 		logger:        logger,
+		writeCh:       make(chan *Frame, 256),
+		writeDone:     make(chan struct{}),
 	}
 
 	proxyConn2, _ := upstreamPipe(t)
