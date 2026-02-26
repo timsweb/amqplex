@@ -35,22 +35,28 @@ benchmark-teardown:
 
 benchmark: benchmark-setup
 	@echo "Running benchmarks..."
-	@RESULTS_DIR=benchmark/results go test -bench=. -benchmem -benchtime=1s -run=^$ -v ./benchmark/scenarios/...
+	@RESULTS_DIR=$(CURDIR)/benchmark/results go test -bench=. -benchmem -benchtime=30s -timeout=20m -run=^$ -v ./benchmark/scenarios/...
 	@echo "Results saved to benchmark/results/"
 
 benchmark-short-lived: benchmark-setup
-	@RESULTS_DIR=benchmark/results go test -bench=BenchmarkShortLived -benchmem -benchtime=1s -run=^$ -v ./benchmark/scenarios/...
+	@RESULTS_DIR=$(CURDIR)/benchmark/results go test -bench=BenchmarkShortLived -benchmem -benchtime=30s -timeout=10m -run=^$ -v ./benchmark/scenarios/...
 
 benchmark-high-concurrency: benchmark-setup
-	@RESULTS_DIR=benchmark/results go test -bench=BenchmarkHighConcurrency -benchmem -benchtime=1s -run=^$ -v ./benchmark/scenarios/...
+	@RESULTS_DIR=$(CURDIR)/benchmark/results go test -bench=BenchmarkHighConcurrency -benchmem -benchtime=30s -timeout=10m -run=^$ -v ./benchmark/scenarios/...
 
 benchmark-mixed-sizes: benchmark-setup
-	@RESULTS_DIR=benchmark/results go test -bench=BenchmarkMixedSizes -benchmem -benchtime=1s -run=^$ -v ./benchmark/scenarios/...
+	@RESULTS_DIR=$(CURDIR)/benchmark/results go test -bench=BenchmarkMixedSizes -benchmem -benchtime=30s -timeout=10m -run=^$ -v ./benchmark/scenarios/...
 
 benchmark-all: benchmark benchmark-teardown
 
 benchmark-compare:
-	@go run benchmark/scripts/compare_results.go benchmark/results
+	@go run benchmark/scripts/compare_results.go $(CURDIR)/benchmark/results
+
+test-main:
+	@echo "Running benchmarks and saving results..."
+	@RESULTS_DIR=$(CURDIR)/benchmark/results go test -bench=. -benchmem -benchtime=30s -timeout=20m -run=^$ -v ./benchmark/scenarios/...
+	@echo "Results saved to benchmark/results/"
+	@make benchmark-compare
 
 clean:
 	rm -rf bin/ dist/ test_certs/

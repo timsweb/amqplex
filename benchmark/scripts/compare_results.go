@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/timsweb/amqplex/benchmark/metrics"
@@ -17,103 +18,94 @@ func main() {
 	}
 
 	resultsDir := os.Args[1]
-	combinedPath := filepath.Join(resultsDir, "combined_results.json")
 
-	data, err := os.ReadFile(combinedPath)
-	if err != nil {
-		fmt.Printf("Failed to read results: %v\n", err)
+	// Read all individual result files (skip combined_results.json).
+	// Go benchmarks call the function multiple times with increasing N;
+	// each call writes a new file. We want the last result per proxy+scenario
+	// (highest N, most accurate).
+	entries, err := filepath.Glob(filepath.Join(resultsDir, "*.json"))
+	if err != nil || len(entries) == 0 {
+		fmt.Fprintf(os.Stderr, "No result files found in %s\n", resultsDir)
+		os.Exit(1)
+	}
+	sort.Strings(entries) // filenames embed timestamps, so alphabetical = chronological
+
+	// latest holds the final result for each proxy+scenario key.
+	latest := make(map[string]metrics.BenchmarkResult)
+
+	for _, path := range entries {
+		if filepath.Base(path) == "combined_results.json" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		// Each file holds a single BenchmarkResult object.
+		var result metrics.BenchmarkResult
+		if err := json.Unmarshal(data, &result); err != nil {
+			continue
+		}
+		key := string(result.Proxy) + "/" + result.Scenario
+		latest[key] = result
+	}
+
+	if len(latest) == 0 {
+		fmt.Fprintln(os.Stderr, "No valid results found.")
 		os.Exit(1)
 	}
 
-	var results []metrics.BenchmarkResult
-	if err := json.Unmarshal(data, &results); err != nil {
-		fmt.Printf("Failed to parse results: %v\n", err)
-		os.Exit(1)
+	// Collect unique scenarios (sorted).
+	scenarioSet := make(map[string]struct{})
+	for _, r := range latest {
+		scenarioSet[r.Scenario] = struct{}{}
 	}
-
-	scenarios := make(map[string][]metrics.BenchmarkResult)
-	for _, result := range results {
-		scenarios[result.Scenario] = append(scenarios[result.Scenario], result)
+	scenarios := make([]string, 0, len(scenarioSet))
+	for s := range scenarioSet {
+		scenarios = append(scenarios, s)
 	}
+	sort.Strings(scenarios)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Scenario\tProxy\tMessages\tDuration\tThroughput/s\tCPU%%\tMemory (MB)\n")
-	fmt.Fprintf(w, "--------\t-----\t--------\t--------\t------------\t-----\t------------\n")
+	fmt.Fprintf(w, "Scenario\tProxy\tMessages\tDuration\tThroughput/s\tMemory (MB)\n")
+	fmt.Fprintf(w, "--------\t-----\t--------\t--------\t------------\t------------\n")
 
-	for scenarioName, scenarioResults := range scenarios {
-		var amqplex, amqproxy *metrics.BenchmarkResult
-		for i := range scenarioResults {
-			if scenarioResults[i].Proxy == metrics.ProxyAMQplex {
-				amqplex = &scenarioResults[i]
-			} else if scenarioResults[i].Proxy == metrics.ProxyAMQProxy {
-				amqproxy = &scenarioResults[i]
-			}
-		}
+	var allResults []metrics.BenchmarkResult
+	for _, r := range latest {
+		allResults = append(allResults, r)
+	}
 
-		if amqplex != nil {
+	for _, scenarioName := range scenarios {
+		amqplex := latest["amqplex/"+scenarioName]
+		amqproxy := latest["amqproxy/"+scenarioName]
+
+		hasAmqplex := amqplex.Proxy != ""
+		hasAmqproxy := amqproxy.Proxy != ""
+
+		if hasAmqplex {
 			memoryMB := float64(amqplex.MemoryStats.CurrentRSS) / 1024
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%.2f\t%.2f\t%.2f\n",
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%.0f\t%.1f\n",
 				scenarioName, amqplex.Proxy, amqplex.Messages,
-				amqplex.Duration, amqplex.Throughput, amqplex.CPUStats.CPUPercent, memoryMB)
+				amqplex.Duration, amqplex.Throughput, memoryMB)
 		}
 
-		if amqproxy != nil {
+		if hasAmqproxy {
 			memoryMB := float64(amqproxy.MemoryStats.CurrentRSS) / 1024
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%.2f\t%.2f\t%.2f\n",
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%.0f\t%.1f\n",
 				scenarioName, amqproxy.Proxy, amqproxy.Messages,
-				amqproxy.Duration, amqproxy.Throughput, amqproxy.CPUStats.CPUPercent, memoryMB)
+				amqproxy.Duration, amqproxy.Throughput, memoryMB)
 		}
 
-		if amqplex != nil && amqproxy != nil {
+		if hasAmqplex && hasAmqproxy {
 			speedup := amqplex.Throughput / amqproxy.Throughput
-			memoryDiff := float64(amqproxy.MemoryStats.CurrentRSS-amqplex.MemoryStats.CurrentRSS) / 1024
-			cpuDiff := amqproxy.CPUStats.CPUPercent - amqplex.CPUStats.CPUPercent
-
-			if speedup > 1 {
-				fmt.Fprintf(w, "  → AMQplex is %.2fx faster, %.2f%% less CPU, %.2f MB less memory\n\n",
-					speedup, cpuDiff, memoryDiff)
-			} else if speedup < 1 {
-				fmt.Fprintf(w, "  → AMQProxy is %.2fx faster, %.2f%% less CPU, %.2f MB less memory\n\n",
-					1/speedup, -cpuDiff, -memoryDiff)
+			if speedup >= 1 {
+				fmt.Fprintf(w, "\t→ AMQplex is %.2fx faster\t\t\t\t\n\n", speedup)
+			} else {
+				fmt.Fprintf(w, "\t→ AMQProxy is %.2fx faster\t\t\t\t\n\n", 1/speedup)
 			}
+		} else {
+			fmt.Fprintln(w)
 		}
 	}
 	w.Flush()
-
-	fmt.Println("\n=== Aggregate Statistics ===")
-	printAggregate("AMQplex", results, metrics.ProxyAMQplex)
-	printAggregate("AMQProxy", results, metrics.ProxyAMQProxy)
-}
-
-func printAggregate(name string, results []metrics.BenchmarkResult, proxyType metrics.ProxyType) {
-	var totalMessages int64
-	var totalDuration float64
-	var totalCPU float64
-	var totalMemoryKB int64
-	var count int
-
-	for _, r := range results {
-		if r.Proxy == proxyType {
-			totalMessages += r.Messages
-			totalDuration += r.Duration.Seconds()
-			totalCPU += r.CPUStats.CPUPercent
-			totalMemoryKB += r.MemoryStats.CurrentRSS
-			count++
-		}
-	}
-
-	if count == 0 {
-		return
-	}
-
-	avgThroughput := float64(totalMessages) / totalDuration
-	avgCPU := totalCPU / float64(count)
-	avgMemoryMB := float64(totalMemoryKB) / float64(count) / 1024
-
-	fmt.Printf("%s:\n", name)
-	fmt.Printf("  Total Messages: %d\n", totalMessages)
-	fmt.Printf("  Avg Throughput: %.2f msg/sec\n", avgThroughput)
-	fmt.Printf("  Avg CPU Usage: %.2f%%\n", avgCPU)
-	fmt.Printf("  Avg Memory: %.2f MB\n", avgMemoryMB)
-	fmt.Println()
 }
