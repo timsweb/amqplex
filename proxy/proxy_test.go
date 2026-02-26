@@ -421,4 +421,5 @@ func TestGetPoolKey_DifferentCredsProduceDifferentKeys(t *testing.T) {
 	p := &Proxy{}
 	assert.NotEqual(t, p.getPoolKey("a", "b", "/"), p.getPoolKey("a", "b", "/v"))
 	assert.NotEqual(t, p.getPoolKey("a", "b", "/"), p.getPoolKey("x", "b", "/"))
+	assert.NotEqual(t, p.getPoolKey("aaa", "bbb", "/"), p.getPoolKey("aa", "abbb", "/"))
 }
