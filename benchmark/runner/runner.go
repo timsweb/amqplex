@@ -12,6 +12,11 @@ import (
 	"github.com/timsweb/amqplex/benchmark/metrics"
 )
 
+// dialTimeout caps how long each AMQP dial attempt may block. Without this,
+// a single stuck goroutine inside b.RunParallel prevents the benchmark from
+// ever finishing when the proxy is under heavy load.
+const dialTimeout = 10 * time.Second
+
 type BenchmarkRunner struct {
 	ProxyURL      string
 	tcpAddr       string
@@ -50,10 +55,12 @@ func (r *BenchmarkRunner) RunScenario(b *testing.B, scenarioName string, message
 	cpuBefore, _ := metrics.GetCPUUsage(r.containerName)
 	memBefore, _ := metrics.GetMemoryUsage(r.containerName)
 
+	dialConfig := amqp091.Config{Dial: amqp091.DefaultDial(dialTimeout)}
+
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			for i := 0; i < messagesPerOp; i++ {
-				conn, err := amqp091.Dial(r.ProxyURL)
+				conn, err := amqp091.DialConfig(r.ProxyURL, dialConfig)
 				if err != nil {
 					b.Errorf("Failed to connect: %v", err)
 					return
