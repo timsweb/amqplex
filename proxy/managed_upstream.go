@@ -41,15 +41,16 @@ type ManagedUpstream struct {
 	usedChannels     map[uint16]bool
 	channelOwners    map[uint16]channelEntry
 	pendingClose     map[uint16]bool // channels awaiting CloseOk; slot held until CloseOk arrives
+	nextHint         uint16          // next channel ID to try; protected by mu
 	clients          []clientWriter
-	lastEmptyTime    time.Time // protected by mu; zero when clients > 0
+	lastEmptyTime    time.Time  // protected by mu; zero when clients > 0
 	upstreamWriterMu sync.Mutex // serialises all writes to conn.Writer
 
 	stopped        atomic.Bool
 	reconnectTotal atomic.Int64 // cumulative reconnect attempts since start
 	heartbeat      uint16       // negotiated heartbeat interval in seconds
 
-	upstreamAddr string       // "host:port" — used in log fields
+	upstreamAddr string // "host:port" — used in log fields
 	logger       *slog.Logger
 }
 
@@ -60,10 +61,32 @@ func (m *ManagedUpstream) AllocateChannel(clientChanID uint16, cw clientWriter) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for id := uint16(1); id <= m.maxChannels; id++ {
+	// Fast path: scan forward from hint
+	for id := m.nextHint; id <= m.maxChannels; id++ {
 		if !m.usedChannels[id] && !m.pendingClose[id] {
 			m.usedChannels[id] = true
 			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
+			m.nextHint = id + 1
+			// Note: logger.Debug is called while m.mu is held. This is safe with the
+			// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
+			// handler acquired m.mu. Keep handlers side-effect-free.
+			if m.logger != nil {
+				m.logger.Debug("channel allocated",
+					slog.Int("client_chan", int(clientChanID)),
+					slog.Int("upstream_chan", int(id)),
+					slog.String("user", m.username),
+					slog.String("vhost", m.vhost),
+				)
+			}
+			return id, nil
+		}
+	}
+	// Wrap around: scan from 1 up to hint
+	for id := uint16(1); id < m.nextHint; id++ {
+		if !m.usedChannels[id] && !m.pendingClose[id] {
+			m.usedChannels[id] = true
+			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
+			m.nextHint = id + 1
 			// Note: logger.Debug is called while m.mu is held. This is safe with the
 			// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
 			// handler acquired m.mu. Keep handlers side-effect-free.
@@ -87,6 +110,9 @@ func (m *ManagedUpstream) ReleaseChannel(upstreamChanID uint16) {
 	defer m.mu.Unlock()
 	delete(m.usedChannels, upstreamChanID)
 	delete(m.channelOwners, upstreamChanID)
+	if upstreamChanID < m.nextHint {
+		m.nextHint = upstreamChanID
+	}
 	// Note: logger.Debug is called while m.mu is held. This is safe with the
 	// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
 	// handler acquired m.mu. Keep handlers side-effect-free.
@@ -349,6 +375,7 @@ func (m *ManagedUpstream) reconnectLoop() {
 		m.usedChannels = make(map[uint16]bool)
 		m.channelOwners = make(map[uint16]channelEntry)
 		m.pendingClose = make(map[uint16]bool)
+		m.nextHint = 1
 		m.clients = make([]clientWriter, 0)
 		m.lastEmptyTime = time.Now() // no clients yet after reconnect
 		m.mu.Unlock()

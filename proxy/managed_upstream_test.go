@@ -18,6 +18,7 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 		password:      "guest",
 		vhost:         "/",
 		maxChannels:   maxChannels,
+		nextHint:      1,
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
 		pendingClose:  make(map[uint16]bool),
@@ -30,7 +31,7 @@ func newTestManagedUpstream(maxChannels uint16) *ManagedUpstream {
 type stubClient struct {
 	frames         []*Frame
 	delivered      chan struct{} // signalled when DeliverFrame is called
-	closedChannels []uint16     // records OnChannelClosed calls
+	closedChannels []uint16      // records OnChannelClosed calls
 }
 
 func newStubClient() *stubClient {
@@ -274,6 +275,7 @@ func TestManagedUpstreamLogsConnected(t *testing.T) {
 		password:      "pass",
 		vhost:         "/",
 		maxChannels:   10,
+		nextHint:      1,
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
 		clients:       make([]clientWriter, 0),
@@ -299,6 +301,7 @@ func TestAllocateReleaseChannelLogged(t *testing.T) {
 		password:      "pass",
 		vhost:         "/",
 		maxChannels:   10,
+		nextHint:      1,
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
 		clients:       make([]clientWriter, 0),
@@ -394,6 +397,7 @@ func TestManagedUpstreamLogsReconnect(t *testing.T) {
 		password:      "pass",
 		vhost:         "/",
 		maxChannels:   10,
+		nextHint:      1,
 		usedChannels:  make(map[uint16]bool),
 		channelOwners: make(map[uint16]channelEntry),
 		clients:       make([]clientWriter, 0),
