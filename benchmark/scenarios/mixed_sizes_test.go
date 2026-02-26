@@ -24,6 +24,11 @@ var messageSizes = []MessageSize{
 
 func BenchmarkMixedSizes_AMQplex(b *testing.B) {
 	reporter := metrics.NewReporter(os.Getenv("RESULTS_DIR"))
+	b.Cleanup(func() {
+		if err := reporter.Save(); err != nil {
+			b.Logf("Failed to save results: %v", err)
+		}
+	})
 	amqplexRunner := runner.NewRunner(
 		"amqp://localhost:5673",
 		"benchmark-amqplex-1",
@@ -55,14 +60,15 @@ func BenchmarkMixedSizes_AMQplex(b *testing.B) {
 			})
 		})
 	}
-
-	if err := reporter.Save(); err != nil {
-		b.Logf("Failed to save results: %v", err)
-	}
 }
 
 func BenchmarkMixedSizes_AMQProxy(b *testing.B) {
 	reporter := metrics.NewReporter(os.Getenv("RESULTS_DIR"))
+	b.Cleanup(func() {
+		if err := reporter.Save(); err != nil {
+			b.Logf("Failed to save results: %v", err)
+		}
+	})
 	amqproxyRunner := runner.NewRunner(
 		"amqp://localhost:5674",
 		"benchmark-amqproxy-1",
@@ -93,9 +99,5 @@ func BenchmarkMixedSizes_AMQProxy(b *testing.B) {
 				})
 			})
 		})
-	}
-
-	if err := reporter.Save(); err != nil {
-		b.Logf("Failed to save results: %v", err)
 	}
 }

@@ -11,18 +11,23 @@ import (
 
 type Reporter struct {
 	resultsDir string
-	results    []BenchmarkResult
+	// results is keyed by "proxy/scenario" and always holds the latest value.
+	// The benchmark framework calls the benchmark function multiple times with
+	// increasing N for calibration; overwriting ensures only the final
+	// (highest-N, steady-state) result is saved.
+	results map[string]BenchmarkResult
 }
 
 func NewReporter(resultsDir string) *Reporter {
 	return &Reporter{
 		resultsDir: resultsDir,
-		results:    make([]BenchmarkResult, 0),
+		results:    make(map[string]BenchmarkResult),
 	}
 }
 
 func (r *Reporter) AddResult(result BenchmarkResult) {
-	r.results = append(r.results, result)
+	key := string(result.Proxy) + "/" + result.Scenario
+	r.results[key] = result
 }
 
 func (r *Reporter) Save() error {
@@ -49,7 +54,11 @@ func (r *Reporter) Save() error {
 	}
 
 	combinedPath := filepath.Join(r.resultsDir, "combined_results.json")
-	data, err := json.MarshalIndent(r.results, "", "  ")
+	vals := make([]BenchmarkResult, 0, len(r.results))
+	for _, v := range r.results {
+		vals = append(vals, v)
+	}
+	data, err := json.MarshalIndent(vals, "", "  ")
 	if err != nil {
 		return err
 	}
