@@ -38,7 +38,15 @@ func setupQueue(connURL string) error {
 		return err
 	}
 
-	return ch.QueueBind(q.Name, "", exchange, false, nil)
+	if err := ch.QueueBind(q.Name, "", exchange, false, nil); err != nil {
+		return err
+	}
+
+	// Purge any messages from previous runs. Without this, messages accumulate
+	// across benchmark runs (nobody consumes them), eventually filling Docker's
+	// disk and triggering RabbitMQ's disk-space alarm which blocks all publishers.
+	_, err = ch.QueuePurge(testQueue, false)
+	return err
 }
 
 func BenchmarkShortLived_AMQplex(b *testing.B) {

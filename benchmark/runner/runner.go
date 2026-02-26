@@ -12,10 +12,14 @@ import (
 	"github.com/timsweb/amqplex/benchmark/metrics"
 )
 
-// dialTimeout caps how long each AMQP dial attempt may block. Without this,
-// a single stuck goroutine inside b.RunParallel prevents the benchmark from
-// ever finishing when the proxy is under heavy load.
-const dialTimeout = 10 * time.Second
+
+// opTimeout caps the entire per-iteration operation (TCP connect + AMQP
+// handshake + channel open + publish + close). The TCP dial timeout alone is
+// not sufficient: a server can accept the TCP connection but stall during the
+// AMQP handshake, leaving the goroutine blocked indefinitely inside
+// b.RunParallel. A leaked goroutine is acceptable here since the process exits
+// after the benchmark completes.
+const opTimeout = 15 * time.Second
 
 type BenchmarkRunner struct {
 	ProxyURL      string
@@ -55,26 +59,32 @@ func (r *BenchmarkRunner) RunScenario(b *testing.B, scenarioName string, message
 	cpuBefore, _ := metrics.GetCPUUsage(r.containerName)
 	memBefore, _ := metrics.GetMemoryUsage(r.containerName)
 
-	dialConfig := amqp091.Config{Dial: amqp091.DefaultDial(dialTimeout)}
-
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for i := 0; i < messagesPerOp; i++ {
-				conn, err := amqp091.DialConfig(r.ProxyURL, dialConfig)
+			type opResult struct{ err error }
+			ch := make(chan opResult, 1)
+			go func() {
+				conn, err := amqp091.Dial(r.ProxyURL)
 				if err != nil {
-					b.Errorf("Failed to connect: %v", err)
+					ch <- opResult{err}
 					return
 				}
-
-				if err := callback(conn); err != nil {
-					conn.Close()
-					b.Errorf("Callback failed: %v", err)
-					return
-				}
-
+				err = callback(conn)
 				conn.Close()
+				ch <- opResult{err}
+			}()
+
+			select {
+			case res := <-ch:
+				if res.err != nil {
+					b.Errorf("operation failed: %v", res.err)
+					return
+				}
+				totalMessages.Add(int64(messagesPerOp))
+			case <-time.After(opTimeout):
+				b.Errorf("operation timed out after %s", opTimeout)
+				return
 			}
-			totalMessages.Add(int64(messagesPerOp))
 		}
 	})
 

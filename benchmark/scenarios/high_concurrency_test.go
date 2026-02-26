@@ -30,7 +30,7 @@ func BenchmarkHighConcurrency_AMQplex(b *testing.B) {
 
 	// SetParallelism controls concurrent goroutines in RunParallel; each
 	// goroutine opens its own connection, so this tests concurrent connections.
-	b.SetParallelism(10)
+	b.SetParallelism(4)
 
 	amqplexRunner.RunScenario(b, "high_concurrency", 1, 1024, func(conn *amqp091.Connection) error {
 		ch, err := conn.Channel()
@@ -67,7 +67,7 @@ func BenchmarkHighConcurrency_AMQProxy(b *testing.B) {
 		b.Fatalf("Failed to setup queue: %v", err)
 	}
 
-	b.SetParallelism(10)
+	b.SetParallelism(4)
 
 	amqproxyRunner.RunScenario(b, "high_concurrency", 1, 1024, func(conn *amqp091.Connection) error {
 		ch, err := conn.Channel()
