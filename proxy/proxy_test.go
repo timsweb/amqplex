@@ -409,3 +409,16 @@ func TestUpstreamLimitZeroMeansUnlimited(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "connection limit reached")
 }
+
+func TestGetPoolKey_SameCredsProduceSameKey(t *testing.T) {
+	p := &Proxy{}
+	k1 := p.getPoolKey("user", "pass", "/")
+	k2 := p.getPoolKey("user", "pass", "/")
+	assert.Equal(t, k1, k2)
+}
+
+func TestGetPoolKey_DifferentCredsProduceDifferentKeys(t *testing.T) {
+	p := &Proxy{}
+	assert.NotEqual(t, p.getPoolKey("a", "b", "/"), p.getPoolKey("a", "b", "/v"))
+	assert.NotEqual(t, p.getPoolKey("a", "b", "/"), p.getPoolKey("x", "b", "/"))
+}

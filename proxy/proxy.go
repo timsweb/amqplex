@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -20,7 +19,7 @@ import (
 type Proxy struct {
 	listener      *AMQPListener
 	config        *config.Config
-	upstreams     map[[32]byte][]*ManagedUpstream // slice per credential set
+	upstreams     map[string][]*ManagedUpstream // slice per credential set
 	netListener   net.Listener
 	mu            sync.RWMutex
 	wg            sync.WaitGroup // tracks active handleConnection goroutines
@@ -39,7 +38,7 @@ func NewProxy(cfg *config.Config, logger *slog.Logger) (*Proxy, error) {
 	return &Proxy{
 		listener:  listener,
 		config:    cfg,
-		upstreams: make(map[[32]byte][]*ManagedUpstream),
+		upstreams: make(map[string][]*ManagedUpstream),
 		logger:    logger,
 	}, nil
 }
@@ -112,9 +111,8 @@ func isClosedError(err error) bool {
 	return errors.Is(err, net.ErrClosed)
 }
 
-func (p *Proxy) getPoolKey(username, password, vhost string) [32]byte {
-	credentials := fmt.Sprintf("%s:%s:%s", username, password, vhost)
-	return sha256.Sum256([]byte(credentials))
+func (p *Proxy) getPoolKey(username, password, vhost string) string {
+	return username + ":" + password + ":" + vhost
 }
 
 func (p *Proxy) getOrCreateManagedUpstream(username, password, vhost string) (*ManagedUpstream, error) {
@@ -405,9 +403,9 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 			// being allocated the same upstream channel number before the broker has
 			// finished closing it (which would cause a "second channel.open" error).
 			closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
-			closePayload = append(closePayload, 0, 0)                       // reply-code = 0
+			closePayload = append(closePayload, 0, 0)                        // reply-code = 0
 			closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
-			closePayload = append(closePayload, 0, 0, 0, 0)                 // class-id=0, method-id=0
+			closePayload = append(closePayload, 0, 0, 0, 0)                  // class-id=0, method-id=0
 			_ = managed.writeFrameToUpstream(&Frame{
 				Type:    FrameTypeMethod,
 				Channel: upstreamID,
@@ -493,7 +491,7 @@ func (p *Proxy) Stop() error {
 			m.mu.Unlock()
 		}
 	}
-	p.upstreams = make(map[[32]byte][]*ManagedUpstream)
+	p.upstreams = make(map[string][]*ManagedUpstream)
 	p.mu.Unlock()
 
 	// Wait up to 30 seconds for active handleConnection goroutines to exit.
