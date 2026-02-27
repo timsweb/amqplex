@@ -4,7 +4,6 @@ package tests
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"testing"
 	"time"
@@ -16,20 +15,23 @@ import (
 	"github.com/timsweb/amqplex/proxy"
 )
 
-// TestMain waits for RabbitMQ to be reachable before running the suite.
+// TestMain waits for RabbitMQ to be fully ready before running the suite.
 func TestMain(m *testing.M) {
-	if !waitForPort("localhost:5672", 30*time.Second) {
-		fmt.Fprintln(os.Stderr, "RabbitMQ not reachable on localhost:5672 after 30s — is Docker Compose up?")
+	if !waitForAMQP("amqp://guest:guest@localhost:5672/", 60*time.Second) {
+		fmt.Fprintln(os.Stderr, "RabbitMQ not ready on localhost:5672 after 60s — is Docker Compose up?")
 		os.Exit(1)
 	}
 	m.Run()
 }
 
-// waitForPort polls addr until it accepts a TCP connection or timeout elapses.
-func waitForPort(addr string, timeout time.Duration) bool {
+// waitForAMQP polls until a full AMQP dial succeeds or timeout elapses.
+// A TCP-only check is insufficient: RabbitMQ opens port 5672 early in its
+// Erlang startup but isn't ready to serve AMQP connections for several more
+// seconds. Dialling AMQP confirms the broker is truly ready.
+func waitForAMQP(url string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		conn, err := amqp.Dial(url)
 		if err == nil {
 			conn.Close()
 			return true

@@ -9,3 +9,8 @@ services:
       # On macOS with Docker Desktop, host→container port-forwarded connections
       # appear to RabbitMQ as coming from a Docker bridge IP, not 127.0.0.1.
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit loopback_users []
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
