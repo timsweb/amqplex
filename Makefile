@@ -24,7 +24,7 @@ integration:
 
 benchmark-setup:
 	@echo "Starting benchmark infrastructure..."
-	docker compose -f benchmark/docker-compose.benchmark.yml up -d
+	docker compose -f benchmark/docker-compose.benchmark.yml up -d --build
 	@echo "Waiting for services to be healthy..."
 	@sleep 10
 	@docker compose -f benchmark/docker-compose.benchmark.yml ps

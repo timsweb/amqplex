@@ -23,6 +23,8 @@ services:
       AMQP_LISTEN_PORT: 5673
       AMQP_POOL_MAX_CHANNELS: 65535
       AMQP_POOL_IDLE_TIMEOUT: 5
+      # Set LOG_LEVEL=debug to trace channel state transitions during benchmark failures
+      LOG_LEVEL: ${AMQPLEX_LOG_LEVEL:-warn}
     depends_on:
       rabbitmq:
         condition: service_healthy

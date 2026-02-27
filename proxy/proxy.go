@@ -306,10 +306,15 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 	}()
 
 	managed.Register(cc)
-	if managed.stopped.Load() {
-		// Upstream was removed by idle cleanup between lookup and register.
+	if managed.stopped.Load() || managed.reconnecting.Load() {
+		// Upstream was removed by idle cleanup, or started reconnecting between
+		// the HasCapacity check and Register. Reject this client so it retries
+		// with a freshly dialled upstream rather than becoming an orphan whose
+		// Channel.Open frames may be drained mid-reconnect, causing the subsequent
+		// Basic.Publish to arrive at a broker that never received Channel.Open
+		// (which triggers a 504 CHANNEL_ERROR and restarts the cycle).
 		managed.Deregister(cc)
-		p.logger.Warn("client rejected — upstream stopped during registration",
+		p.logger.Warn("client rejected — upstream stopped or reconnecting during registration",
 			slog.String("remote_addr", remoteAddr),
 		)
 		_ = cc.DeliverFrame(&Frame{
@@ -352,7 +357,15 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 		if isChannelOpen(frame) {
 			upstreamID, err := managed.AllocateChannel(frame.Channel, cc)
 			if err != nil {
-				// No channel capacity — close this client.
+				// If upstream is reconnecting, close this client so it can retry
+				// with a fresh connection. Otherwise, no channel capacity.
+				if err.Error() == "upstream reconnecting" {
+					p.logger.Debug("client disconnected — upstream reconnecting",
+						slog.String("remote_addr", remoteAddr),
+						slog.String("user", username),
+						slog.String("vhost", vhost),
+					)
+				}
 				return
 			}
 			cc.MapChannel(frame.Channel, upstreamID)
@@ -401,30 +414,33 @@ func (p *Proxy) releaseClientChannels(managed *ManagedUpstream, cc *ClientConnec
 		cc.Mu.RUnlock()
 
 		if ok {
-			// Send Channel.Close to upstream so the channel is truly closed before
-			// it can be reallocated. ScheduleChannelClose keeps the slot reserved in
-			// usedChannels until Channel.CloseOk arrives, preventing a new client from
-			// being allocated the same upstream channel number before the broker has
-			// finished closing it (which would cause a "second channel.open" error).
-			closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
-			closePayload = append(closePayload, 0, 0)                        // reply-code = 0
-			closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
-			closePayload = append(closePayload, 0, 0, 0, 0)                  // class-id=0, method-id=0
-			managed.writeFrameToUpstream(&Frame{
-				Type:    FrameTypeMethod,
-				Channel: upstreamID,
-				Payload: closePayload,
-			})
-			managed.ScheduleChannelClose(upstreamID)
+			// Client disconnected with the channel still open (never sent Channel.Close).
+			// We must send Channel.Close to the broker — but only if the upstream
+			// connection is still the one we allocated on. After a reconnect,
+			// channelOwners is wiped, so ScheduleChannelCloseIfOwnedBy returns false
+			// and we skip the send, preventing a stale Channel.Close from being sent
+			// to a new broker connection that never opened this channel (which would
+			// cause a 504 CHANNEL_ERROR and trigger an infinite reconnect cycle).
+			if managed.ScheduleChannelCloseIfOwnedBy(upstreamID, cc) {
+				closePayload := SerializeMethodHeader(&MethodHeader{ClassID: 20, MethodID: 40})
+				closePayload = append(closePayload, 0, 0)                        // reply-code = 0
+				closePayload = append(closePayload, serializeShortString("")...) // reply-text = ""
+				closePayload = append(closePayload, 0, 0, 0, 0)                  // class-id=0, method-id=0
+				managed.writeFrameToUpstream(&Frame{
+					Type:    FrameTypeMethod,
+					Channel: upstreamID,
+					Payload: closePayload,
+				})
+			}
 		} else {
 			// The client already sent Channel.Close but we have not yet received
 			// Channel.CloseOk from the broker. Releasing the slot immediately would
 			// allow a new client to open the same upstream channel number before the
 			// broker finishes the close handshake, causing a 504 CHANNEL_ERROR.
-			// ScheduleChannelCloseIfOpen holds the slot in pendingClose until CloseOk
-			// arrives. If CloseOk already arrived (usedChannels[id] == false) the
-			// channel is genuinely free and nothing needs to be done.
-			managed.ScheduleChannelCloseIfOpen(upstreamID)
+			// ScheduleChannelCloseIfOwnedBy holds the slot in pendingClose only when
+			// the channel is still registered to this client (checking the owner
+			// pointer, not just usedChannels, to guard against slot reallocation).
+			managed.ScheduleChannelCloseIfOwnedBy(upstreamID, cc)
 		}
 		cc.UnmapChannel(clientID)
 	}

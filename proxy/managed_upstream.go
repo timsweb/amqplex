@@ -45,11 +45,13 @@ type ManagedUpstream struct {
 	clients       []clientWriter
 	lastEmptyTime time.Time // protected by mu; zero when clients > 0
 
-	writeCh   chan *Frame   // write pump input; buffered
-	writeDone chan struct{} // closed to stop the pump goroutine
-	doneOnce  sync.Once     // ensures writeDone is closed exactly once
+	writeCh     chan *Frame    // write pump input; buffered
+	writeDoneMu sync.Mutex     // protects writeDone replacement across reconnects
+	writeDone   chan struct{}  // current write pump stop channel; replaced each reconnect
+	pumpWg      sync.WaitGroup // tracks the single live writePump goroutine
 
 	stopped        atomic.Bool
+	reconnecting   atomic.Bool  // true while reconnectLoop is running; HasCapacity returns false
 	reconnectTotal atomic.Int64 // cumulative reconnect attempts since start
 	heartbeat      uint16       // negotiated heartbeat interval in seconds
 
@@ -59,17 +61,42 @@ type ManagedUpstream struct {
 
 // AllocateChannel finds the lowest free upstream channel ID, registers the
 // mapping, and returns the upstream ID. Returns an error if maxChannels is
-// exhausted.
+// exhausted or if the upstream is currently reconnecting.
+//
+// The reconnecting check guards the narrow window between the post-Register
+// check in handleConnection and this call: a reconnect could start after the
+// client passes the register check but before it opens a channel. Failing fast
+// here lets the client retry with a fresh upstream rather than opening a
+// channel during a state-reset in progress.
 func (m *ManagedUpstream) AllocateChannel(clientChanID uint16, cw clientWriter) (uint16, error) {
+	if m.reconnecting.Load() {
+		if m.logger != nil {
+			m.logger.Debug("channel allocation rejected — upstream reconnecting",
+				slog.Int("client_chan", int(clientChanID)),
+				slog.String("user", m.username),
+				slog.String("vhost", m.vhost),
+			)
+		}
+		return 0, errors.New("upstream reconnecting")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Fast path: scan forward from hint
+	// Fast path: scan forward from hint. nextHint starts at 1 and must never be
+	// 0 — channel 0 is the AMQP connection-level channel and is illegal for
+	// regular use. uint16 overflows to 0 when id=65535; guard against that here.
+	if m.nextHint == 0 {
+		m.nextHint = 1
+	}
 	for id := m.nextHint; id <= m.maxChannels; id++ {
 		if !m.usedChannels[id] && !m.pendingClose[id] {
 			m.usedChannels[id] = true
 			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
 			m.nextHint = id + 1
+			if m.nextHint == 0 { // uint16 overflow guard: 65535+1 wraps to 0
+				m.nextHint = 1
+			}
 			// Note: logger.Debug is called while m.mu is held. This is safe with the
 			// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
 			// handler acquired m.mu. Keep handlers side-effect-free.
@@ -90,6 +117,9 @@ func (m *ManagedUpstream) AllocateChannel(clientChanID uint16, cw clientWriter) 
 			m.usedChannels[id] = true
 			m.channelOwners[id] = channelEntry{owner: cw, clientChanID: clientChanID}
 			m.nextHint = id + 1
+			if m.nextHint == 0 { // uint16 overflow guard
+				m.nextHint = 1
+			}
 			// Note: logger.Debug is called while m.mu is held. This is safe with the
 			// stdlib slog handlers (text/JSON/discard) but would deadlock if a custom
 			// handler acquired m.mu. Keep handlers side-effect-free.
@@ -138,28 +168,81 @@ func (m *ManagedUpstream) ScheduleChannelClose(upstreamChanID uint16) {
 	defer m.mu.Unlock()
 	m.pendingClose[upstreamChanID] = true
 	delete(m.channelOwners, upstreamChanID)
-}
-
-// ScheduleChannelCloseIfOpen marks an upstream channel as pending close only if
-// it is still recorded as open in usedChannels. This is used when the client has
-// already sent Channel.Close but the proxy has not yet received Channel.CloseOk
-// from the broker — the slot must stay reserved until CloseOk arrives to prevent
-// a new Channel.Open from reaching the broker while the previous close is still
-// in flight (which causes a 504 CHANNEL_ERROR).
-//
-// If usedChannels[id] is already false the broker's CloseOk has been processed
-// and the channel is genuinely free; nothing is done in that case.
-func (m *ManagedUpstream) ScheduleChannelCloseIfOpen(upstreamChanID uint16) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.usedChannels[upstreamChanID] {
-		m.pendingClose[upstreamChanID] = true
-		delete(m.channelOwners, upstreamChanID)
+	if m.logger != nil {
+		m.logger.Debug("channel scheduled for close (proxy-initiated)",
+			slog.Int("upstream_chan", int(upstreamChanID)),
+			slog.String("user", m.username),
+			slog.String("vhost", m.vhost),
+		)
 	}
 }
 
-// HasCapacity reports whether this upstream has at least one free channel slot.
+// ScheduleChannelCloseIfOwnedBy marks an upstream channel as pending close only
+// if channelOwners still records it as belonging to cw. Returns true if the
+// channel was scheduled (caller should send Channel.Close to the broker); false
+// if the entry is absent or belongs to a different client.
+//
+// This is the single ownership-aware scheduling primitive used in two cases:
+//
+//  1. Client-initiated close in flight: client already sent Channel.Close but
+//     the proxy has not yet received Channel.CloseOk. The slot must stay reserved
+//     until CloseOk arrives to prevent a new Channel.Open from reaching the broker
+//     while the previous close is still in flight (which causes a 504 CHANNEL_ERROR).
+//
+//  2. Client disconnected with channel open: the proxy needs to send Channel.Close
+//     on the client's behalf, but only if the upstream connection hasn't been reset
+//     (e.g. due to a prior 504). After reconnect channelOwners is wiped, so old
+//     goroutines' stale cleanup calls return false and send nothing — preventing
+//     the self-perpetuating 504 cycle where Channel.Close for a never-opened channel
+//     triggers another 504.
+//
+// Checking the owner (not just usedChannels) is critical: between the moment
+// readLoop frees the slot (deletes usedChannels[id] and channelOwners[id]) and
+// the moment this function runs, a new client may have already re-allocated the
+// same channel number. Checking usedChannels alone would incorrectly mark the
+// new client's channel as pending close. Checking the owner pointer ensures we
+// only act when the channel still belongs to the disconnecting client.
+func (m *ManagedUpstream) ScheduleChannelCloseIfOwnedBy(upstreamChanID uint16, cw clientWriter) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.channelOwners[upstreamChanID]
+	if ok && entry.owner == cw {
+		// Channel still registered to this client; hold the slot in pendingClose
+		// until CloseOk arrives from the broker.
+		m.pendingClose[upstreamChanID] = true
+		delete(m.channelOwners, upstreamChanID)
+		if m.logger != nil {
+			m.logger.Debug("channel scheduled for close (ownership confirmed)",
+				slog.Int("upstream_chan", int(upstreamChanID)),
+				slog.String("user", m.username),
+				slog.String("vhost", m.vhost),
+			)
+		}
+		return true
+	}
+	// Entry absent (CloseOk already freed the slot, or upstream was reconnected
+	// and state was reset) or belongs to a different client (reallocated).
+	// In either case do nothing — the slot is either already clean or belongs
+	// to someone else.
+	if m.logger != nil {
+		m.logger.Debug("channel close skipped — already freed, reallocated, or upstream reconnected",
+			slog.Int("upstream_chan", int(upstreamChanID)),
+			slog.Bool("entry_present", ok),
+			slog.String("user", m.username),
+			slog.String("vhost", m.vhost),
+		)
+	}
+	return false
+}
+
+// HasCapacity reports whether this upstream has at least one free channel slot
+// and is not currently reconnecting. Returns false during reconnect so that
+// getOrCreateManagedUpstream routes new clients to a fresh upstream instead of
+// attaching them to a connection whose channel state is being reset.
 func (m *ManagedUpstream) HasCapacity() bool {
+	if m.reconnecting.Load() {
+		return false
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return uint16(len(m.usedChannels)) < m.maxChannels
@@ -203,27 +286,42 @@ func (m *ManagedUpstream) Deregister(cw clientWriter) {
 
 // writeFrameToUpstream enqueues a frame for the write pump.
 // Returns immediately; the pump handles serialisation and flushing.
-// No-ops if the upstream is stopped.
+// No-ops if the upstream is stopped, reconnecting, or write pump
+// has been signalled to stop.
 func (m *ManagedUpstream) writeFrameToUpstream(frame *Frame) {
-	if m.stopped.Load() {
+	if m.stopped.Load() || m.reconnecting.Load() {
+		if m.reconnecting.Load() && m.logger != nil {
+			m.logger.Debug("frame dropped — upstream reconnecting",
+				slog.Int("channel", int(frame.Channel)),
+				slog.Int("frame_type", int(frame.Type)),
+				slog.String("user", m.username),
+				slog.String("vhost", m.vhost),
+			)
+		}
 		return
 	}
+	m.writeDoneMu.Lock()
+	done := m.writeDone
+	m.writeDoneMu.Unlock()
 	select {
 	case m.writeCh <- frame:
-	case <-m.writeDone:
+	case <-done:
 	}
 }
 
 // writePump is the sole writer to conn.Writer. It reads frames from writeCh,
 // batches any frames that are already queued, then flushes once per batch.
-// It exits on write error (calling handleUpstreamFailure) or when writeDone
-// is closed (clean shutdown / idle expiry).
-func (m *ManagedUpstream) writePump(conn *UpstreamConn) {
+// It exits on write error (calling handleUpstreamFailure) or when done is
+// closed (clean shutdown / idle expiry / replaced by reconnect).
+// done is captured at start time so that reconnectLoop can kill this specific
+// pump instance by closing its done channel without affecting the replacement.
+func (m *ManagedUpstream) writePump(conn *UpstreamConn, done <-chan struct{}) {
+	defer m.pumpWg.Done()
 	for {
 		var frame *Frame
 		select {
 		case frame = <-m.writeCh:
-		case <-m.writeDone:
+		case <-done:
 			return
 		}
 
@@ -260,7 +358,14 @@ func (m *ManagedUpstream) writePump(conn *UpstreamConn) {
 }
 
 func (m *ManagedUpstream) stopWritePump() {
-	m.doneOnce.Do(func() { close(m.writeDone) })
+	m.writeDoneMu.Lock()
+	defer m.writeDoneMu.Unlock()
+	select {
+	case <-m.writeDone:
+		// already closed
+	default:
+		close(m.writeDone)
+	}
 }
 
 // Start sets the upstream connection and launches the read loop goroutine.
@@ -269,7 +374,11 @@ func (m *ManagedUpstream) Start(conn *UpstreamConn) {
 	m.mu.Lock()
 	m.conn = conn
 	m.mu.Unlock()
-	go m.writePump(conn) // pass conn directly; pump owns it for writing
+	m.writeDoneMu.Lock()
+	done := m.writeDone
+	m.writeDoneMu.Unlock()
+	m.pumpWg.Add(1)
+	go m.writePump(conn, done) // pass conn directly; pump owns it for writing
 	go m.readLoop()
 	if m.logger != nil {
 		m.logger.Info("upstream connected",
@@ -322,6 +431,13 @@ func (m *ManagedUpstream) readLoop() {
 					delete(m.pendingClose, frame.Channel)
 					delete(m.usedChannels, frame.Channel)
 					m.mu.Unlock()
+					if m.logger != nil {
+						m.logger.Debug("Channel.CloseOk received — proxy-initiated, slot freed",
+							slog.Int("upstream_chan", int(frame.Channel)),
+							slog.String("user", m.username),
+							slog.String("vhost", m.vhost),
+						)
+					}
 					continue
 				}
 				// Client-initiated close: deliver CloseOk to the client, then clean up.
@@ -331,6 +447,14 @@ func (m *ManagedUpstream) readLoop() {
 					delete(m.usedChannels, frame.Channel)
 				}
 				m.mu.Unlock()
+				if m.logger != nil {
+					m.logger.Debug("Channel.CloseOk received — client-initiated",
+						slog.Int("upstream_chan", int(frame.Channel)),
+						slog.Bool("owner_found", ok),
+						slog.String("user", m.username),
+						slog.String("vhost", m.vhost),
+					)
+				}
 				if ok {
 					remapped := *frame
 					remapped.Channel = entry.clientChanID
@@ -368,9 +492,29 @@ func (m *ManagedUpstream) handleUpstreamFailure(cause error) {
 		)
 	}
 
+	// Only the first caller (writePump or readLoop) starts a reconnect. When the
+	// upstream TCP connection dies both goroutines get errors nearly simultaneously
+	// and both call handleUpstreamFailure. Without this guard, two reconnectLoops
+	// would run concurrently: each dials a new RabbitMQ connection, resets shared
+	// channel state, and starts its own writePump+readLoop. The two writePumps
+	// then race to dequeue from the shared writeCh and send frames to different
+	// connections in garbled order — Channel.Open can arrive mid-handshake on the
+	// wrong connection, causing RabbitMQ to report
+	// "unexpected method in connection state running".
+	if !m.reconnecting.CompareAndSwap(false, true) {
+		return // another goroutine is already handling reconnect
+	}
+
+	// Close the connection immediately so any writePump goroutine that is
+	// mid-write on the old conn gets an error and exits promptly. Without this,
+	// reconnectLoop's pumpWg.Wait() could block for the full TCP timeout.
 	m.mu.Lock()
+	oldConn := m.conn
 	clients := append([]clientWriter(nil), m.clients...)
 	m.mu.Unlock()
+	if oldConn != nil {
+		oldConn.Conn.Close()
+	}
 
 	for _, cw := range clients {
 		cw.Abort()
@@ -404,6 +548,32 @@ func (m *ManagedUpstream) markStoppedIfIdle(timeout time.Duration) bool {
 }
 
 // reconnectLoop attempts to re-establish the upstream connection with
+// exponential backoff. It relaunches readLoop once a connection succeeds.
+//
+// CRITICAL: The reconnecting flag is used to prevent race conditions
+// where clients attempt to allocate channels or send frames during the
+// reconnection window. Three safeguards prevent these races:
+//
+//  1. AllocateChannel checks reconnecting and returns "upstream reconnecting"
+//     if set, preventing new channel allocations during reconnect.
+//
+//  2. writeFrameToUpstream checks reconnecting and no-ops if set,
+//     preventing frames from being sent during reconnect (which would be
+//     discarded by the drain loop or sent to the wrong connection).
+//
+//  3. handleConnection checks HasCapacity (which checks reconnecting)
+//     before registering clients, preventing new clients from being
+//     attached to a reconnecting upstream.
+//
+// Without these safeguards, the following race can occur:
+//   - Client passes HasCapacity check
+//   - Client sends Channel.Open → frame enqueued
+//   - Upstream fails → reconnecting = true
+//   - reconnectLoop drains writeCh → Channel.Open discarded
+//   - New connection established
+//   - Client sends Basic.Publish → 504 CHANNEL_ERROR
+//     (channel never opened on the broker)
+//
 // exponential backoff. It relaunches readLoop once a connection succeeds.
 func (m *ManagedUpstream) reconnectLoop() {
 	base := m.reconnectBase
@@ -447,17 +617,46 @@ func (m *ManagedUpstream) reconnectLoop() {
 		m.nextHint = 1
 		m.clients = make([]clientWriter, 0)
 		m.lastEmptyTime = time.Now() // no clients yet after reconnect
-		// writeDone and doneOnce are NOT reset: writeDone is created once at
-		// construction and reused across reconnects. The old pump already exited
-		// on write error; the new pump below reuses the same done channel.
 		m.mu.Unlock()
 
-		// Drain stale frames queued before failure (all old clients were aborted).
+		// Kill the old writePump. If this reconnect was triggered by readLoop
+		// (not writePump), the old pump may still be alive — blocked on
+		// select { case frame = <-m.writeCh: ... case <-done: ... }. We must
+		// stop it before starting a new pump; otherwise both goroutines compete
+		// for frames from writeCh. The old pump would write to the dead conn,
+		// get a write error, call handleUpstreamFailure, win the CAS (since
+		// reconnecting was cleared), and start a third reconnect loop.
+		//
+		// Sequence:
+		//   1. Swap writeDone — old pump holds a reference to oldDone; new pump
+		//      gets newDone. Closing oldDone signals the old pump to exit.
+		//   2. Close oldDone — old pump exits (via <-done or after write error
+		//      on the conn we already closed in handleUpstreamFailure).
+		//   3. pumpWg.Wait() — block until old pump's defer pumpWg.Done() fires,
+		//      guaranteeing no overlap with the new pump.
+		m.writeDoneMu.Lock()
+		oldDone := m.writeDone
+		m.writeDone = make(chan struct{})
+		newDone := m.writeDone
+		m.writeDoneMu.Unlock()
+		close(oldDone)
+		m.pumpWg.Wait() // old pump must fully exit before new pump starts
+
+		// Drain stale frames queued before failure (all old clients were aborted,
+		// and ScheduleChannelCloseIfOwnedBy returns false for wiped channelOwners,
+		// so no new stale frames can arrive after the state reset above).
 		for len(m.writeCh) > 0 {
 			<-m.writeCh
 		}
 
-		go m.writePump(conn)
+		// Clear the reconnecting flag only after draining stale frames and
+		// confirming the old pump has exited. New clients that arrive after this
+		// point will see HasCapacity() == true and can safely allocate channels
+		// on the fresh connection.
+		m.reconnecting.Store(false)
+
+		m.pumpWg.Add(1)
+		go m.writePump(conn, newDone)
 		go m.readLoop()
 		if m.logger != nil {
 			m.logger.Info("upstream reconnected",

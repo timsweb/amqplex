@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,6 +54,43 @@ func (s *stubClient) DeliverFrame(f *Frame) error {
 func (s *stubClient) Abort() {}
 func (s *stubClient) OnChannelClosed(clientChanID uint16) {
 	s.closedChannels = append(s.closedChannels, clientChanID)
+}
+
+// TestAllocateChannel_NeverAllocatesChannelZero is a regression test for the
+// uint16 overflow bug: nextHint is a uint16 and readLoop frees channels by
+// directly deleting from usedChannels without calling ReleaseChannel, so
+// nextHint only ever increases during normal operation. After 65535 total
+// channel opens nextHint overflows from 65535+1 to 0. The fast-path scan then
+// starts at id=0, which is never in usedChannels (it's the AMQP connection
+// channel), so channel 0 gets allocated and Channel.Open(0) is sent to the
+// broker — which responds with "unexpected method in connection state running"
+// and closes the entire connection.
+func TestAllocateChannel_NeverAllocatesChannelZero(t *testing.T) {
+	m := newTestManagedUpstream(65535)
+	stub := newStubClient()
+
+	// Simulate reaching nextHint=65535 by forcing it directly.
+	m.mu.Lock()
+	m.nextHint = 65535
+	m.mu.Unlock()
+
+	// Allocate channel 65535 — this sets nextHint = 65536, which wraps to 0
+	// as uint16 without the overflow guard.
+	id, err := m.AllocateChannel(1, stub)
+	require.NoError(t, err)
+	assert.Equal(t, uint16(65535), id, "should allocate channel 65535")
+
+	// Free channel 65535 so the next allocation can succeed via wrap-around.
+	m.mu.Lock()
+	delete(m.usedChannels, uint16(65535))
+	delete(m.channelOwners, uint16(65535))
+	m.mu.Unlock()
+
+	// The next allocation must never return channel 0.
+	id2, err := m.AllocateChannel(2, stub)
+	require.NoError(t, err)
+	assert.NotEqual(t, uint16(0), id2, "channel 0 must never be allocated (it is the AMQP connection channel)")
+	assert.GreaterOrEqual(t, id2, uint16(1), "allocated channel must be >= 1")
 }
 
 func TestAllocateChannel_AssignsLowestFreeID(t *testing.T) {
@@ -378,6 +416,42 @@ func TestRegisterResetsLastEmptyTime(t *testing.T) {
 	assert.True(t, m.lastEmptyTime.IsZero())
 }
 
+// TestHandleUpstreamFailure_SingleReconnectLoop verifies that when both
+// writePump and readLoop call handleUpstreamFailure concurrently (the common
+// case when the upstream TCP connection dies), only one reconnectLoop is
+// started. Two concurrent reconnectLoops each dial a new connection and reset
+// shared channel state, then start competing writePumps that dequeue from the
+// same writeCh and send frames to different RabbitMQ connections — causing
+// Channel.Open to arrive during a connection handshake on the wrong connection
+// ("unexpected method in connection state running").
+func TestHandleUpstreamFailure_SingleReconnectLoop(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	m.reconnectBase = 50 * time.Millisecond
+
+	var dialCount atomic.Int32
+	m.dialFn = func() (*UpstreamConn, error) {
+		dialCount.Add(1)
+		m.stopped.Store(true) // stop after first dial so test terminates
+		return nil, errors.New("stopped")
+	}
+
+	// Simulate writePump and readLoop calling handleUpstreamFailure concurrently.
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.handleUpstreamFailure(errors.New("connection reset"))
+		}()
+	}
+	wg.Wait()
+
+	// Allow the single reconnectLoop to run and attempt the dial.
+	time.Sleep(200 * time.Millisecond)
+
+	assert.Equal(t, int32(1), dialCount.Load(), "only one reconnectLoop must dial")
+}
+
 func TestReconnectTotalIncrements(t *testing.T) {
 	m := newTestManagedUpstream(10)
 	m.reconnectBase = time.Millisecond
@@ -530,4 +604,135 @@ func TestReadLoop_PendingCloseOkDiscarded(t *testing.T) {
 	m.mu.Unlock()
 	assert.False(t, stillUsed, "usedChannels[7] must be cleared")
 	assert.False(t, stillPending, "pendingClose[7] must be cleared")
+}
+
+// TestScheduleChannelCloseIfOwnedBy_DoesNotMarkReallocationAsPending verifies
+// that when readLoop frees a channel and a new client immediately re-allocates
+// it, a stale call to ScheduleChannelCloseIfOwnedBy (from the old client's
+// releaseClientChannels) does NOT mark the new client's channel as pending close.
+//
+// Regression test for the race: if we checked usedChannels[id] instead of
+// channelOwners[id].owner, the check would return true for the NEW client's
+// allocation and incorrectly orphan it.
+func TestScheduleChannelCloseIfOwnedBy_DoesNotMarkReallocationAsPending(t *testing.T) {
+	m := newTestManagedUpstream(65535)
+
+	oldClient := newStubClient()
+	newClient := newStubClient()
+
+	// Old client allocates upstream channel 1.
+	upstreamID, err := m.AllocateChannel(1, oldClient)
+	require.NoError(t, err)
+	require.Equal(t, uint16(1), upstreamID)
+
+	// Simulate readLoop having already processed Channel.CloseOk for channel 1:
+	// it deletes channelOwners and usedChannels (the slot is free) and resets
+	// nextHint so the slot is the first candidate for re-allocation.
+	m.mu.Lock()
+	delete(m.channelOwners, 1)
+	delete(m.usedChannels, 1)
+	m.nextHint = 1
+	m.mu.Unlock()
+
+	// New client re-allocates the same upstream channel 1 before
+	// releaseClientChannels runs for the old client.
+	upstreamID2, err := m.AllocateChannel(1, newClient)
+	require.NoError(t, err)
+	require.Equal(t, uint16(1), upstreamID2)
+
+	// Now the stale releaseClientChannels call for the old client fires.
+	// It must NOT touch the new client's channel.
+	scheduled := m.ScheduleChannelCloseIfOwnedBy(1, oldClient)
+
+	assert.False(t, scheduled, "stale call must return false when channel belongs to new client")
+
+	m.mu.Lock()
+	_, isPending := m.pendingClose[1]
+	entry, hasOwner := m.channelOwners[1]
+	m.mu.Unlock()
+
+	assert.False(t, isPending, "new client's channel must not be marked pending close")
+	assert.True(t, hasOwner, "new client's channelOwners entry must still exist")
+	if hasOwner {
+		assert.Equal(t, clientWriter(newClient), entry.owner, "channel must still belong to new client")
+	}
+}
+
+// TestScheduleChannelCloseIfOwnedBy_ReturnsTrueWhenOwned verifies that when the
+// channel is still registered to the caller, ScheduleChannelCloseIfOwnedBy
+// returns true and sets pendingClose (so the caller knows to send Channel.Close).
+func TestScheduleChannelCloseIfOwnedBy_ReturnsTrueWhenOwned(t *testing.T) {
+	m := newTestManagedUpstream(65535)
+	client := newStubClient()
+
+	upstreamID, err := m.AllocateChannel(1, client)
+	require.NoError(t, err)
+
+	scheduled := m.ScheduleChannelCloseIfOwnedBy(upstreamID, client)
+
+	assert.True(t, scheduled, "must return true when channel is owned by the caller")
+
+	m.mu.Lock()
+	_, isPending := m.pendingClose[upstreamID]
+	_, hasOwner := m.channelOwners[upstreamID]
+	m.mu.Unlock()
+
+	assert.True(t, isPending, "pendingClose must be set")
+	assert.False(t, hasOwner, "channelOwners must be cleared")
+}
+
+// TestScheduleChannelCloseIfOwnedBy_ReturnsFalseAfterReconnect verifies that
+// after a reconnect (which wipes channelOwners), stale releaseClientChannels
+// calls return false and do not send Channel.Close to the new connection.
+// This prevents the self-perpetuating 504 cycle: one 504 → reconnect → stale
+// Channel.Close on new connection → another 504 → ...
+func TestScheduleChannelCloseIfOwnedBy_ReturnsFalseAfterReconnect(t *testing.T) {
+	m := newTestManagedUpstream(65535)
+	client := newStubClient()
+
+	upstreamID, err := m.AllocateChannel(1, client)
+	require.NoError(t, err)
+
+	// Simulate reconnect: channelOwners, usedChannels, and pendingClose are all reset.
+	m.mu.Lock()
+	m.usedChannels = make(map[uint16]bool)
+	m.channelOwners = make(map[uint16]channelEntry)
+	m.pendingClose = make(map[uint16]bool)
+	m.nextHint = 1
+	m.mu.Unlock()
+
+	// Stale releaseClientChannels fires after reconnect — must not send Channel.Close.
+	scheduled := m.ScheduleChannelCloseIfOwnedBy(upstreamID, client)
+
+	assert.False(t, scheduled, "must return false after reconnect wipes channel state")
+
+	m.mu.Lock()
+	_, isPending := m.pendingClose[upstreamID]
+	m.mu.Unlock()
+	assert.False(t, isPending, "pendingClose must not be set after reconnect")
+}
+
+// TestAllocateChannel_RejectsDuringReconnect verifies that AllocateChannel
+// returns an error when the upstream is reconnecting, preventing channels
+// from being allocated during the reconnection window. This prevents
+// race conditions where Channel.Open frames are sent during reconnect.
+func TestAllocateChannel_RejectsDuringReconnect(t *testing.T) {
+	m := newTestManagedUpstream(10)
+	client := newStubClient()
+
+	// Set reconnecting flag
+	m.reconnecting.Store(true)
+
+	// AllocateChannel should fail
+	_, err := m.AllocateChannel(1, client)
+	require.Error(t, err)
+	assert.Equal(t, "upstream reconnecting", err.Error())
+
+	// Clear reconnecting flag
+	m.reconnecting.Store(false)
+
+	// Now AllocateChannel should succeed
+	upstreamID, err := m.AllocateChannel(1, client)
+	require.NoError(t, err)
+	assert.NotEqual(t, uint16(0), upstreamID)
 }
